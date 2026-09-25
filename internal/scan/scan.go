@@ -76,7 +76,13 @@ func (s *Scanner) run(ctx context.Context) error {
 	}
 	var seen []store.FileRow
 	var entries []grouping.Entry
-	var scanned []string
+	// attempted holds every root that was walked at all (used to tell grouping
+	// whether a directory is a library root, e.g. for loose files). clean holds
+	// only the roots that walked without any per-node I/O error and is what we
+	// pass to SyncFiles, so a partially-failed root never causes files under its
+	// unreadable parts to be wrongly marked missing.
+	var attempted []string
+	var clean []string
 
 	for _, root := range s.Roots {
 		abs := appdir.Abs(s.AppDir, root)
@@ -84,9 +90,11 @@ func (s *Scanner) run(ctx context.Context) error {
 			log.Printf("raíz no disponible, se omite: %s", root)
 			continue
 		}
-		scanned = append(scanned, root)
+		attempted = append(attempted, root)
+		rootHadError := false
 		err := filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
+				rootHadError = true
 				log.Printf("no se puede leer %s: %v", p, err)
 				if d != nil && d.IsDir() {
 					return fs.SkipDir
@@ -108,6 +116,7 @@ func (s *Scanner) run(ctx context.Context) error {
 			}
 			info, err := d.Info()
 			if err != nil {
+				rootHadError = true
 				log.Printf("no se puede leer %s: %v", p, err)
 				return nil
 			}
@@ -116,13 +125,29 @@ func (s *Scanner) run(ctx context.Context) error {
 				return err
 			}
 			row := store.FileRow{Path: rel, Size: info.Size(), MTime: info.ModTime().UnixMilli(), Kind: string(kind)}
+			known_, wasKnown := known[rel]
 			hashed := int64(0)
-			if k, ok := known[rel]; ok && k.Size == row.Size && k.MTime == row.MTime && (k.Fingerprint != "" || !kind.Fingerprinted()) {
-				row.Fingerprint = k.Fingerprint
+			if wasKnown && known_.Size == row.Size && known_.MTime == row.MTime && (known_.Fingerprint != "" || !kind.Fingerprinted()) {
+				row.Fingerprint = known_.Fingerprint
 			} else if kind.Fingerprinted() {
 				fp, err := fingerprint.Of(p)
 				if err != nil {
-					log.Printf("no se puede leer %s: %v", p, err)
+					// The file is present but unreadable/corrupt right now
+					// (locked, flaky drive, truncated mid-write, etc). Don't
+					// let a transient read failure make it look deleted:
+					// keep its previous known state if we have one, or
+					// register it with no fingerprint so a later scan can
+					// retry, but either way do not drop it from this scan's
+					// results.
+					log.Printf("no se puede calcular fingerprint de %s, se conserva el estado anterior: %v", p, err)
+					if wasKnown {
+						row = known_
+					} else {
+						row.Fingerprint = ""
+					}
+					seen = append(seen, row)
+					entries = append(entries, grouping.Entry{Path: rel, Size: row.Size, Kind: kind})
+					s.add(1, 0)
 					return nil
 				}
 				row.Fingerprint = fp
@@ -141,12 +166,22 @@ func (s *Scanner) run(ctx context.Context) error {
 		if _, err := os.Stat(abs); err != nil {
 			return fmt.Errorf("la raíz %s desapareció durante el escaneo", root)
 		}
+		if rootHadError {
+			// Some part of this root could not be read (flaky drive, stale
+			// network mount, permission hiccup). We keep whatever we did
+			// manage to see, but we must not let SyncFiles treat this root as
+			// fully scanned: that would mark every known file under the
+			// unreadable part as missing.
+			log.Printf("raíz escaneada parcialmente por errores de lectura, no se marcarán archivos ausentes bajo ella: %s", root)
+			continue
+		}
+		clean = append(clean, root)
 	}
 
-	if err := s.Store.SyncFiles(seen, scanned); err != nil {
+	if err := s.Store.SyncFiles(seen, clean); err != nil {
 		return err
 	}
-	versions := grouping.Build(entries, scanned)
+	versions := grouping.Build(entries, attempted)
 	if err := s.Store.ReplaceVersions(versions); err != nil {
 		return err
 	}
