@@ -189,7 +189,7 @@ func newSource(r io.ReaderAt, size int64) *source {
 // read returns exactly n bytes at off. Reading past the end of the file is a
 // format error (a truncated or lying header); any other failure is ErrIO.
 func (s *source) read(off int64, n int) ([]byte, error) {
-	if off < 0 || n < 0 || off+int64(n) > s.size {
+	if off < 0 || n < 0 || off > s.size-int64(n) {
 		return nil, invalid("read of %d bytes at %d past end of file (%d)", n, off, s.size)
 	}
 	if int64(n) > s.budget {
@@ -393,6 +393,7 @@ git commit -m "feat(probe): media info types, bounded reader and normalization"
 - Create: `internal/probe/probetest/probetest.go` (constructores para tests, lo usan también `scan` en la Task 11)
 - Create: `internal/probe/helpers_test.go`
 - Create: `internal/probe/mkv.go`
+- Modify: `internal/probe/normalize.go` (agregar `aacChannels` al final; la usan MKV, MP4 y AVI)
 - Test: `internal/probe/mkv_test.go`
 
 Referencia del formato: elementos EBML = ID (varint que conserva sus bits de marca, 1–4 bytes) + tamaño (varint de 1–8 bytes sin la marca; todos los bits en 1 = tamaño desconocido) + datos. IDs usados: EBML `1A45DFA3` (DocType `4282`), Segment `18538067`, SeekHead `114D9B74` (Seek `4DBB`: SeekID `53AB`, SeekPosition `53AC`, relativa al inicio de los datos del Segment), Info `1549A966` (TimecodeScale `2AD7B1`, por defecto 1 000 000 ns; Duration `4489`, float en ticks), Tracks `1654AE6B` (TrackEntry `AE`: TrackType `83` 1=video 2=audio 17=subs, CodecID `86`, CodecPrivate `63A2`, Language `22B59C` por defecto `eng`, LanguageIETF `22B59D`, Video `E0` PixelWidth `B0` / PixelHeight `BA`, Audio `E1` Channels `9F` por defecto 1), Cluster `1F43B675`. Para AAC, los canales se toman del AudioSpecificConfig en `CodecPrivate` (en la colección real hay MKV sin `Channels`, que por defecto valdría 1, con audio estéreo).
@@ -657,6 +658,33 @@ Run: `go test ./internal/probe/`
 Expected: FAIL — `undefined: readMKV` (y las constantes `mkv…`)
 
 - [ ] **Step 3: Implementación**
+
+Agregar al final de `internal/probe/normalize.go` (canales de un AudioSpecificConfig de AAC; lo usan este lector y, en las Tasks 3 y 4, MP4 y AVI):
+
+```go
+// aacChannels reads channelConfiguration from an AudioSpecificConfig.
+func aacChannels(asc []byte) int {
+	if len(asc) < 2 || asc[0]>>3 == 31 { // escaped object types are rare: skip
+		return 0
+	}
+	var cfg byte
+	if freq := (asc[0]&7)<<1 | asc[1]>>7; freq == 15 { // explicit 24-bit frequency
+		if len(asc) < 5 {
+			return 0
+		}
+		cfg = (asc[4] >> 3) & 0xF
+	} else {
+		cfg = (asc[1] >> 3) & 0xF
+	}
+	switch {
+	case cfg >= 1 && cfg <= 6:
+		return int(cfg)
+	case cfg == 7:
+		return 8
+	}
+	return 0
+}
+```
 
 `internal/probe/mkv.go`:
 
@@ -1660,29 +1688,6 @@ func parseESDS(d []byte) (esdsInfo, bool) {
 		es.channels = aacChannels(d[p:min(p+n, len(d))])
 	}
 	return es, true
-}
-
-// aacChannels reads channelConfiguration from an AudioSpecificConfig.
-func aacChannels(asc []byte) int {
-	if len(asc) < 2 || asc[0]>>3 == 31 { // escaped object types are rare: skip
-		return 0
-	}
-	var cfg byte
-	if freq := (asc[0]&7)<<1 | asc[1]>>7; freq == 15 { // explicit 24-bit frequency
-		if len(asc) < 5 {
-			return 0
-		}
-		cfg = (asc[4] >> 3) & 0xF
-	} else {
-		cfg = (asc[1] >> 3) & 0xF
-	}
-	switch {
-	case cfg >= 1 && cfg <= 6:
-		return int(cfg)
-	case cfg == 7:
-		return 8
-	}
-	return 0
 }
 
 func mpeg4AudioObject(ot byte) string {
