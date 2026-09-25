@@ -156,13 +156,13 @@ func isFourCC(s string) bool {
 	return true
 }
 
-// mp4Duration converts a movie duration to milliseconds without overflowing.
-// A duration of all ones means "unknown" (fragmented or live files).
+// mp4Duration converts a movie duration to milliseconds. A duration of all
+// ones means "unknown" (fragmented or live files).
 func mp4Duration(dur, scale, unknown uint64) int64 {
-	if scale == 0 || dur == unknown || dur/scale > math.MaxInt64/1000 {
+	if scale == 0 || dur == unknown {
 		return 0
 	}
-	return int64(dur/scale*1000 + dur%scale*1000/scale)
+	return saneMs(float64(dur) / float64(scale) * 1000)
 }
 
 // childBox returns the first child of parent with the given type, or nil.

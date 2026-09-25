@@ -282,9 +282,7 @@ func (s *source) mkvInfo(e ebmlElem, info *Info) error {
 		}
 		return true, err
 	})
-	if d := dur * float64(scale) / 1e6; d > 0 && d < math.MaxInt64 { // NaN fails both comparisons
-		info.DurationMs = int64(d)
-	}
+	info.DurationMs = saneMs(dur * float64(scale) / 1e6)
 	return err
 }
 

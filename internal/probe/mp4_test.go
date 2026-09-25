@@ -148,6 +148,7 @@ func TestMP4UnknownOrHugeDuration(t *testing.T) {
 		"v0 all ones": pt.FullBox("mvhd", 0, zeros(8), pt.U32BE(1000), pt.U32BE(0xFFFFFFFF)),
 		"v1 all ones": pt.FullBox("mvhd", 1, zeros(16), pt.U32BE(1), pt.U64BE(math.MaxUint64)),
 		"v1 overflow": pt.FullBox("mvhd", 1, zeros(16), pt.U32BE(1), pt.U64BE(1<<62)),
+		"v1 max ms":   pt.FullBox("mvhd", 1, zeros(16), pt.U32BE(1000), pt.U64BE(9223372036854775999)),
 	} {
 		got, err := readMP4(src(join(pt.Box("ftyp", zeros(8)), pt.Box("moov", mvhd))))
 		if err != nil || got.DurationMs != 0 {

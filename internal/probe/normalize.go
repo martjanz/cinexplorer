@@ -173,3 +173,16 @@ func aacChannels(asc []byte) int {
 	}
 	return 0
 }
+
+// maxDurationMs bounds durations read from headers; anything longer (a week)
+// comes from a corrupt header and is reported as unknown.
+const maxDurationMs = 7 * 24 * 3600 * 1000
+
+// saneMs converts a duration in milliseconds, reporting NaN, negative, zero
+// and absurdly long values as unknown (0).
+func saneMs(ms float64) int64 {
+	if ms > 0 && ms < maxDurationMs {
+		return int64(ms)
+	}
+	return 0
+}
