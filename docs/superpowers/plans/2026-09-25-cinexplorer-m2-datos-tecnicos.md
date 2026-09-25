@@ -555,6 +555,22 @@ import (
 	pt "cinexplorer/internal/probe/probetest"
 )
 
+// failingReaderAt fails any read that touches an offset at or past fail, to
+// simulate a transient I/O error (e.g. an unplugged drive) partway through a
+// read; reads entirely before fail are served from b.
+type failingReaderAt struct {
+	b    []byte
+	fail int64
+}
+
+func (r failingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off+int64(len(p)) > r.fail {
+		return 0, errors.New("device not ready")
+	}
+	n := copy(p, r.b[off:])
+	return n, nil
+}
+
 func TestMKVBasic(t *testing.T) {
 	info, err := readMKV(src(pt.MKV(1920, 800, 6_300_000, "spa")))
 	if err != nil {
@@ -636,6 +652,55 @@ func TestMKVUnknownSizeSegmentAndTimecodeScale(t *testing.T) {
 	}
 }
 
+func TestMKVIOErrorStaysErrIO(t *testing.T) {
+	// TrackType is the last element in the file: its 9-byte header (id+size)
+	// fits in readElem's 12-byte lookahead read, which also grabs the first
+	// 3 bytes of its 8-byte value, leaving the last 5 value bytes to be read
+	// separately by uintElem. Fail exactly at that boundary so the header
+	// read succeeds (parsing reaches uintElem) but the value read fails with
+	// a non-EOF error, which must surface as ErrIO, not ErrInvalid.
+	head := mkvHeader("matroska")
+	trackType := pt.EBMLUint(mkvTrackType, 1) // 1(id)+8(size)+8(data) = 17 bytes
+	te := pt.EBML(mkvTrackEntry, trackType)
+	tracks := pt.EBML(mkvTracks, te)
+	seg := pt.EBML(mkvSegment, tracks)
+	file := append(head, seg...)
+
+	fail := int64(len(file) - 5)
+	r := failingReaderAt{b: file, fail: fail}
+	if _, err := readMKV(newSource(r, int64(len(file)))); !errors.Is(err, ErrIO) {
+		t.Fatalf("err = %v, want ErrIO", err)
+	}
+}
+
+func TestMKVNegativeDurationIgnored(t *testing.T) {
+	file := append(mkvHeader("matroska"), pt.EBML(mkvSegment,
+		pt.EBML(mkvInfo, pt.EBMLFloat(mkvDuration, -5)),
+		pt.EBML(mkvTracks, track(1, "V_MPEG4/ISO/AVC")),
+	)...)
+	got, err := readMKV(src(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DurationMs != 0 {
+		t.Fatalf("DurationMs = %d, want 0", got.DurationMs)
+	}
+}
+
+func TestMKVAbsurdPixelWidthIgnored(t *testing.T) {
+	file := append(mkvHeader("matroska"), pt.EBML(mkvSegment,
+		pt.EBML(mkvTracks, track(1, "V_MPEG4/ISO/AVC",
+			pt.EBML(mkvVideo, pt.EBMLUint(mkvPixelWidth, 1<<40), pt.EBMLUint(mkvPixelHeight, 720)))),
+	)...)
+	got, err := readMKV(src(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Width != 0 {
+		t.Fatalf("Width = %d, want 0", got.Width)
+	}
+}
+
 func TestMKVInvalid(t *testing.T) {
 	good := pt.MKV(1280, 720, 1000, "eng")
 	for name, b := range map[string][]byte{
@@ -681,6 +746,19 @@ func aacChannels(asc []byte) int {
 		return int(cfg)
 	case cfg == 7:
 		return 8
+	}
+	return 0
+}
+
+// maxDurationMs bounds durations read from headers; anything longer (a week)
+// comes from a corrupt header and is reported as unknown.
+const maxDurationMs = 7 * 24 * 3600 * 1000
+
+// saneMs converts a duration in milliseconds, reporting NaN, negative, zero
+// and absurdly long values as unknown (0).
+func saneMs(ms float64) int64 {
+	if ms > 0 && ms < maxDurationMs {
+		return int64(ms)
 	}
 	return 0
 }
@@ -816,7 +894,10 @@ func (s *source) data(e ebmlElem) ([]byte, error) {
 
 func (s *source) uintElem(e ebmlElem) (uint64, error) {
 	b, err := s.data(e)
-	if err != nil || len(b) > 8 {
+	if err != nil {
+		return 0, err
+	}
+	if len(b) > 8 {
 		return 0, invalid("bad EBML uint")
 	}
 	var v uint64
@@ -970,7 +1051,7 @@ func (s *source) mkvInfo(e ebmlElem, info *Info) error {
 		}
 		return true, err
 	})
-	info.DurationMs = int64(dur * float64(scale) / 1e6)
+	info.DurationMs = saneMs(dur * float64(scale) / 1e6)
 	return err
 }
 
@@ -1025,6 +1106,12 @@ func (s *source) mkvTracks(e ebmlElem, segEnd int64, info *Info) error {
 		})
 		if err != nil {
 			return false, err
+		}
+		// Absurd values (corrupt or hostile headers) count as unknown.
+		for _, v := range []*uint64{&w, &h, &ch} {
+			if *v > 65535 {
+				*v = 0
+			}
 		}
 		if ietf != "" {
 			lang = ietf
@@ -1134,7 +1221,7 @@ func mkvSubCodec(id string) string {
 - [ ] **Step 4: Verificar que pasa**
 
 Run: `go vet ./internal/probe/... && go test ./internal/probe/ -v -run MKV`
-Expected: PASS (5 tests)
+Expected: PASS (8 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1163,6 +1250,8 @@ Referencia: caja = tamaño uint32 BE + tipo (4 bytes) + datos; tamaño 1 = tama�
 
 En la entrada de muestra (datos después de su encabezado de 8 bytes): video → ancho u16 @24, alto @26, cajas hijas desde @78; audio → versión u16 @8, canales u16 @16, cajas hijas desde @28 (v0), @44 (v1 QuickTime), @64 (v2). Idioma empaquetado: 3 letras de 5 bits + 0x60; valores < 0x400 son códigos Macintosh viejos (se ignoran).
 
+Robustez (revisión de código): el lector solo desciende por las rutas que necesita (`trak/tkhd`, `trak/tref/chap`, `trak/mdia/{hdlr,mdhd}`, `trak/mdia/minf/stbl/stsd`), nunca recursivamente por cualquier caja — un archivo con millones de cajas anidadas provocaba un stack overflow fatal; una duración con todos los bits en 1 es "desconocida"; los errores de lectura en cajas opcionales (`esds`, `dac3`) se propagan (`ErrIO` se reintenta) y solo se ignoran los de formato; en QuickTime v2 los canales son un u32 @40.
+
 Lo que enseñó la colección real y cubren los tests: los MOV/MP4 de QuickTime tienen un segundo `hdlr` dentro de `minf` que no es el de la pista; `stsd` suele decir 2 canales aunque el AAC sea mono o 5.1 (el dato real está en el AudioSpecificConfig de `esds`) y lo mismo con AC3 (dato real en `dac3`: `acmod` + `lfeon`).
 
 - [ ] **Step 1: Test que falla**
@@ -1175,6 +1264,7 @@ package probe
 import (
 	"bytes"
 	"errors"
+	"math"
 	"reflect"
 	"testing"
 
@@ -1293,6 +1383,64 @@ func TestMP4QuickTimeHandlerAndAC3Channels(t *testing.T) {
 		t.Fatalf("audio %+v", got.Audio)
 	}
 }
+
+func TestMP4DeepNestingIsBounded(t *testing.T) {
+	// moov > trak > mdia > mdia > … (16 MB): only real paths are followed,
+	// so nesting cannot drive recursion. A generic recursive walker hit a
+	// fatal stack overflow on this file.
+	const depth = 2_000_000
+	var b bytes.Buffer
+	b.Write(pt.U32BE(uint32(16 + 8*depth)))
+	b.WriteString("moov")
+	b.Write(pt.U32BE(uint32(8 + 8*depth)))
+	b.WriteString("trak")
+	for i := range depth {
+		b.Write(pt.U32BE(uint32(8 * (depth - i))))
+		b.WriteString("mdia")
+	}
+	got, err := readMP4(src(join(pt.Box("ftyp", zeros(8)), b.Bytes())))
+	if err != nil || got.VideoCodec != "" || len(got.Audio) != 0 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+func TestMP4UnknownOrHugeDuration(t *testing.T) {
+	for name, mvhd := range map[string][]byte{
+		"v0 all ones": pt.FullBox("mvhd", 0, zeros(8), pt.U32BE(1000), pt.U32BE(0xFFFFFFFF)),
+		"v1 all ones": pt.FullBox("mvhd", 1, zeros(16), pt.U32BE(1), pt.U64BE(math.MaxUint64)),
+		"v1 overflow": pt.FullBox("mvhd", 1, zeros(16), pt.U32BE(1), pt.U64BE(1<<62)),
+		"v1 max ms":   pt.FullBox("mvhd", 1, zeros(16), pt.U32BE(1000), pt.U64BE(9223372036854775999)),
+	} {
+		got, err := readMP4(src(join(pt.Box("ftyp", zeros(8)), pt.Box("moov", mvhd))))
+		if err != nil || got.DurationMs != 0 {
+			t.Errorf("%s: DurationMs = %d, err = %v; want 0, nil", name, got.DurationMs, err)
+		}
+	}
+}
+
+func TestMP4ReadErrorInESDSIsReported(t *testing.T) {
+	file := join(pt.Box("ftyp", zeros(8)), pt.Box("moov",
+		mp4Trak(1, "soun", "eng", audioEntry("mp4a", 2, pt.Box("free", zeros(40)), esds(0x40)))))
+	// The padding keeps esds past the 64 bytes read from the sample entry, so
+	// only the esds read itself hits the failing region.
+	at := int64(bytes.LastIndex(file, []byte("esds")))
+	r := failingReaderAt{b: file, fail: at + 5} // the esds header reads fine, its data does not
+	if _, err := readMP4(newSource(r, int64(len(file)))); !errors.Is(err, ErrIO) {
+		t.Fatalf("err = %v, want ErrIO", err)
+	}
+}
+
+func TestMP4QuickTimeV2SoundChannels(t *testing.T) {
+	// SoundDescription v2: @16 always says 3; the channel count is a u32 at @40.
+	entry := pt.Box("lpcm", zeros(8), pt.U16BE(2), zeros(6), pt.U16BE(3), zeros(22), pt.U32BE(6), zeros(20))
+	got, err := readMP4(src(join(pt.Box("ftyp", zeros(8)), pt.Box("moov", mp4Trak(1, "soun", "eng", entry)))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Audio, []Track{{Codec: "pcm", Lang: "en", Channels: 6}}) {
+		t.Fatalf("audio %+v", got.Audio)
+	}
+}
 ```
 
 - [ ] **Step 2: Verificar que falla**
@@ -1309,6 +1457,8 @@ package probe
 
 import (
 	"encoding/binary"
+	"errors"
+	"math"
 	"strings"
 )
 
@@ -1411,14 +1561,10 @@ func readMP4(s *source) (Info, error) {
 			if err != nil {
 				return false, err
 			}
-			var scale, dur uint64
 			if len(d) >= 32 && d[0] == 1 {
-				scale, dur = uint64(binary.BigEndian.Uint32(d[20:])), binary.BigEndian.Uint64(d[24:])
+				info.DurationMs = mp4Duration(binary.BigEndian.Uint64(d[24:]), uint64(binary.BigEndian.Uint32(d[20:])), math.MaxUint64)
 			} else if len(d) >= 20 {
-				scale, dur = uint64(binary.BigEndian.Uint32(d[12:])), uint64(binary.BigEndian.Uint32(d[16:]))
-			}
-			if scale > 0 {
-				info.DurationMs = int64(dur * 1000 / scale)
+				info.DurationMs = mp4Duration(uint64(binary.BigEndian.Uint32(d[16:])), uint64(binary.BigEndian.Uint32(d[12:])), math.MaxUint32)
 			}
 		case "trak":
 			t, err := s.mp4Trak(b)
@@ -1465,62 +1611,96 @@ func isFourCC(s string) bool {
 	return true
 }
 
+// mp4Duration converts a movie duration to milliseconds. A duration of all
+// ones means "unknown" (fragmented or live files).
+func mp4Duration(dur, scale, unknown uint64) int64 {
+	if scale == 0 || dur == unknown {
+		return 0
+	}
+	return saneMs(float64(dur) / float64(scale) * 1000)
+}
+
+// childBox returns the first child of parent with the given type, or nil.
+func (s *source) childBox(parent mp4Box, typ string) (*mp4Box, error) {
+	var found *mp4Box
+	err := boxes(s, parent.dataOff, parent.end, func(b mp4Box) (bool, error) {
+		if b.typ == typ {
+			found = &b
+			return false, nil
+		}
+		return true, nil
+	})
+	return found, err
+}
+
+// mp4Trak reads a track. It only descends along the paths that hold what we
+// need (trak/tkhd, trak/tref/chap, trak/mdia/{hdlr,mdhd}, trak/mdia/minf/stbl/
+// stsd), so nesting in a crafted file cannot drive recursion. Taking hdlr only
+// from mdia also skips the data-reference hdlr QuickTime puts inside minf.
 func (s *source) mp4Trak(trak mp4Box) (mp4Track, error) {
 	var t mp4Track
 	var stsd *mp4Box
-	var walk func(off, end int64) error
-	walk = func(off, end int64) error {
-		return boxes(s, off, end, func(b mp4Box) (bool, error) {
-			switch b.typ {
-			case "mdia", "minf", "stbl", "tref":
-				return true, walk(b.dataOff, b.end)
-			case "tkhd":
-				d, err := s.boxData(b, 24)
-				if err != nil {
-					return false, err
-				}
-				if len(d) >= 24 && d[0] == 1 {
-					t.id = binary.BigEndian.Uint32(d[20:])
-				} else if len(d) >= 16 {
-					t.id = binary.BigEndian.Uint32(d[12:])
-				}
-			case "chap":
-				d, err := s.boxData(b, 256)
-				if err != nil {
-					return false, err
-				}
-				for i := 0; i+4 <= len(d); i += 4 {
-					t.chapter = append(t.chapter, binary.BigEndian.Uint32(d[i:]))
-				}
-			case "hdlr":
-				d, err := s.boxData(b, 12)
-				if err != nil {
-					return false, err
-				}
-				// QuickTime files carry a second, data-reference hdlr inside
-				// minf; the media handler is the one in mdia, seen first.
-				if len(d) >= 12 && t.handler == "" {
-					t.handler = string(d[8:12])
-				}
-			case "mdhd":
-				d, err := s.boxData(b, 34)
-				if err != nil {
-					return false, err
-				}
-				at := 20
-				if len(d) > 0 && d[0] == 1 {
-					at = 32
-				}
-				if len(d) >= at+2 {
-					t.lang = mp4Lang(binary.BigEndian.Uint16(d[at:]))
-				}
-			case "stsd":
-				stsd = &b
+	err := boxes(s, trak.dataOff, trak.end, func(b mp4Box) (bool, error) {
+		switch b.typ {
+		case "tkhd":
+			d, err := s.boxData(b, 24)
+			if err != nil {
+				return false, err
 			}
-			return true, nil
-		})
-	}
-	if err := walk(trak.dataOff, trak.end); err != nil {
+			if len(d) >= 24 && d[0] == 1 {
+				t.id = binary.BigEndian.Uint32(d[20:])
+			} else if len(d) >= 16 {
+				t.id = binary.BigEndian.Uint32(d[12:])
+			}
+		case "tref":
+			chap, err := s.childBox(b, "chap")
+			if err != nil || chap == nil {
+				return err == nil, err
+			}
+			d, err := s.boxData(*chap, 256)
+			if err != nil {
+				return false, err
+			}
+			for i := 0; i+4 <= len(d); i += 4 {
+				t.chapter = append(t.chapter, binary.BigEndian.Uint32(d[i:]))
+			}
+		case "mdia":
+			return true, boxes(s, b.dataOff, b.end, func(c mp4Box) (bool, error) {
+				switch c.typ {
+				case "hdlr":
+					d, err := s.boxData(c, 12)
+					if err != nil {
+						return false, err
+					}
+					if len(d) >= 12 {
+						t.handler = string(d[8:12])
+					}
+				case "mdhd":
+					d, err := s.boxData(c, 34)
+					if err != nil {
+						return false, err
+					}
+					at := 20
+					if len(d) > 0 && d[0] == 1 {
+						at = 32
+					}
+					if len(d) >= at+2 {
+						t.lang = mp4Lang(binary.BigEndian.Uint16(d[at:]))
+					}
+				case "minf":
+					stbl, err := s.childBox(c, "stbl")
+					if err != nil || stbl == nil {
+						return err == nil, err
+					}
+					stsd, err = s.childBox(*stbl, "stsd")
+					return err == nil, err
+				}
+				return true, nil
+			})
+		}
+		return true, nil
+	})
+	if err != nil {
 		return t, err
 	}
 	if stsd != nil {
@@ -1540,6 +1720,10 @@ func mp4Lang(v uint16) string {
 	b := []byte{byte(v>>10&0x1F) + 0x60, byte(v>>5&0x1F) + 0x60, byte(v&0x1F) + 0x60}
 	return normLang(string(b))
 }
+
+// maxChannels caps channel counts read from headers; larger values come from
+// corrupt files and are reported as unknown.
+const maxChannels = 64
 
 // mp4SampleEntry reads the first sample description of a track.
 func (s *source) mp4SampleEntry(stsd mp4Box, t *mp4Track) error {
@@ -1561,28 +1745,49 @@ func (s *source) mp4SampleEntry(stsd mp4Box, t *mp4Track) error {
 		}
 		t.codec = mp4VideoCodec(entry.typ)
 		if entry.typ == "mp4v" {
-			if es, ok := s.mp4ESDS(entry, 78); ok {
+			es, ok, err := s.mp4ESDS(entry, 78)
+			if err != nil {
+				return err
+			}
+			if ok {
 				t.codec = mpeg4VideoObject(es.objectType)
 			}
 		}
 	case "soun":
-		if len(d) >= 18 {
+		version := uint16(0)
+		if len(d) >= 10 {
+			version = binary.BigEndian.Uint16(d[8:])
+		}
+		switch {
+		case version == 2 && len(d) >= 44:
+			// QuickTime SoundDescription v2: @16 is a constant 3, the
+			// real count is a u32 at @40.
+			t.ch = int(min(binary.BigEndian.Uint32(d[40:]), maxChannels+1))
+		case len(d) >= 18:
 			t.ch = int(binary.BigEndian.Uint16(d[16:]))
 		}
-		t.codec = mp4AudioCodec(entry.typ)
-		start := int64(0)
-		if len(d) >= 10 {
-			start = map[uint16]int64{0: 28, 1: 44, 2: 64}[binary.BigEndian.Uint16(d[8:])]
+		if t.ch > maxChannels {
+			t.ch = 0
 		}
-		if entry.typ == "ac-3" {
-			if ch := s.mp4AC3Channels(entry, start); ch > 0 {
+		t.codec = mp4AudioCodec(entry.typ)
+		start := map[uint16]int64{0: 28, 1: 44, 2: 64}[version]
+		switch entry.typ {
+		case "ac-3":
+			ch, err := s.mp4AC3Channels(entry, start)
+			if err != nil {
+				return err
+			}
+			if ch > 0 {
 				t.ch = ch // stsd often says 2 whatever the stream has
 			}
-		}
-		if entry.typ == "mp4a" {
-			if es, ok := s.mp4ESDS(entry, start); ok {
+		case "mp4a":
+			es, ok, err := s.mp4ESDS(entry, start)
+			if err != nil {
+				return err
+			}
+			if ok {
 				t.codec = mpeg4AudioObject(es.objectType)
-				if es.channels > 0 {
+				if t.codec == "aac" && es.channels > 0 {
 					t.ch = es.channels // stsd often says 2 whatever the stream has
 				}
 			}
@@ -1593,24 +1798,36 @@ func (s *source) mp4SampleEntry(stsd mp4Box, t *mp4Track) error {
 	return nil
 }
 
+// optional drops format errors in boxes that only refine what we already
+// know, but keeps read errors: those must reach the caller to be retried.
+func optional(err error) error {
+	if errors.Is(err, ErrInvalid) {
+		return nil
+	}
+	return err
+}
+
+// sampleEntryChildren is the span holding a sample entry's child boxes.
+func sampleEntryChildren(entry mp4Box, childOff int64) mp4Box {
+	return mp4Box{typ: entry.typ, dataOff: entry.dataOff + childOff, end: entry.end}
+}
+
 // mp4AC3Channels reads the channel layout from the dac3 box of an "ac-3"
 // sample entry: acmod gives the full-range channels, lfeon adds the LFE.
-func (s *source) mp4AC3Channels(entry mp4Box, childOff int64) int {
+func (s *source) mp4AC3Channels(entry mp4Box, childOff int64) (int, error) {
 	if childOff == 0 {
-		return 0
+		return 0, nil
 	}
-	ch := 0
-	boxes(s, entry.dataOff+childOff, entry.end, func(b mp4Box) (bool, error) {
-		if b.typ != "dac3" {
-			return true, nil
-		}
-		if d, err := s.boxData(b, 3); err == nil && len(d) == 3 {
-			v := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
-			ch = []int{2, 1, 2, 3, 3, 4, 4, 5}[v>>11&7] + int(v>>10&1)
-		}
-		return false, nil
-	})
-	return ch
+	dac3, err := s.childBox(sampleEntryChildren(entry, childOff), "dac3")
+	if err != nil || dac3 == nil {
+		return 0, optional(err)
+	}
+	d, err := s.boxData(*dac3, 3)
+	if err != nil || len(d) < 3 {
+		return 0, optional(err)
+	}
+	v := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
+	return []int{2, 1, 2, 3, 3, 4, 4, 5}[v>>11&7] + int(v>>10&1), nil
 }
 
 // esdsInfo is what we use from an MPEG-4 elementary stream descriptor.
@@ -1619,30 +1836,29 @@ type esdsInfo struct {
 	channels   int // from the AAC AudioSpecificConfig; 0 when absent
 }
 
-// mp4ESDS finds the esds box among the children of a sample entry (directly
-// or inside a QuickTime "wave" box) and parses it.
-func (s *source) mp4ESDS(entry mp4Box, childOff int64) (esdsInfo, bool) {
+// mp4ESDS finds the esds box among the children of a sample entry, or inside
+// its QuickTime "wave" child, and parses it.
+func (s *source) mp4ESDS(entry mp4Box, childOff int64) (esdsInfo, bool, error) {
 	if childOff == 0 {
-		return esdsInfo{}, false
+		return esdsInfo{}, false, nil
 	}
-	var es esdsInfo
-	var found bool
-	var walk func(off, end int64)
-	walk = func(off, end int64) {
-		boxes(s, off, end, func(b mp4Box) (bool, error) {
-			switch b.typ {
-			case "wave":
-				walk(b.dataOff, b.end)
-			case "esds":
-				if d, err := s.boxData(b, 128); err == nil {
-					es, found = parseESDS(d)
-				}
-			}
-			return !found, nil
-		})
+	kids := sampleEntryChildren(entry, childOff)
+	esds, err := s.childBox(kids, "esds")
+	if err == nil && esds == nil {
+		var wave *mp4Box
+		if wave, err = s.childBox(kids, "wave"); err == nil && wave != nil {
+			esds, err = s.childBox(*wave, "esds")
+		}
 	}
-	walk(entry.dataOff+childOff, entry.end)
-	return es, found
+	if err != nil || esds == nil {
+		return esdsInfo{}, false, optional(err)
+	}
+	d, err := s.boxData(*esds, 128)
+	if err != nil {
+		return esdsInfo{}, false, optional(err)
+	}
+	es, ok := parseESDS(d)
+	return es, ok, nil
 }
 
 // parseESDS parses an esds payload: version/flags, then an ES_Descriptor
@@ -1788,7 +2004,7 @@ func mp4SubCodec(f string) string {
 - [ ] **Step 4: Verificar que pasa**
 
 Run: `go vet ./internal/probe/... && go test ./internal/probe/ -v -run MP4`
-Expected: PASS (4 tests)
+Expected: PASS (8 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1912,6 +2128,21 @@ func TestAVIAudioChannelFixes(t *testing.T) {
 		t.Fatalf("audio %+v, want %+v", got.Audio, want)
 	}
 }
+
+func TestAVIAbsurdValuesAreUnknown(t *testing.T) {
+	file := pt.RIFF("AVI ", pt.List("hdrl",
+		avih(0xFFFFFFFF, 0xFFFFFFFF, 1<<20, 1<<20),
+		pt.List("strl", strh("vids", "XVID", 0xFFFFFFFF, 1, 0xFFFFFFFF), vidsStrf(1<<20, 480, "XVID")),
+		pt.List("strl", strh("auds", "\x00\x00\x00\x00", 1, 1, 0), audsStrf(0x0055, 1000)),
+	))
+	got, err := readAVI(src(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DurationMs != 0 || got.Width != 0 || got.Height != 480 || got.Audio[0].Channels != 0 {
+		t.Fatalf("got %+v", got)
+	}
+}
 ```
 
 - [ ] **Step 2: Verificar que falla**
@@ -1979,7 +2210,7 @@ func parseHdrl(hdrl []byte) (Info, error) {
 	var usPerFrame, totalFrames, dmlFrames uint32
 	var avihW, avihH int
 	var gotAvih bool
-	var videoMs int64 = -1
+	var videoMs int64
 
 	riffChunks(hdrl, func(id string, d []byte) {
 		switch {
@@ -2012,11 +2243,11 @@ func parseHdrl(hdrl []byte) (Info, error) {
 					return
 				}
 				info.VideoCodec = normFourCC(strf[16:20])
-				info.Width = int(int32(le.Uint32(strf[4:])))
-				info.Height = abs(int(int32(le.Uint32(strf[8:]))))
+				info.Width = saneDim(int(int32(le.Uint32(strf[4:]))))
+				info.Height = saneDim(abs(int(int32(le.Uint32(strf[8:])))))
 				scale, rate, length := uint64(le.Uint32(strh[20:])), uint64(le.Uint32(strh[24:])), uint64(le.Uint32(strh[32:]))
 				if rate > 0 {
-					videoMs = int64(length * scale * 1000 / rate)
+					videoMs = saneMs(float64(length) * float64(scale) * 1000 / float64(rate))
 				}
 			case "auds":
 				info.Audio = append(info.Audio, aviAudio(strf))
@@ -2027,15 +2258,15 @@ func parseHdrl(hdrl []byte) (Info, error) {
 		return Info{}, invalid("AVI without avih")
 	}
 	if info.Width == 0 && info.Height == 0 {
-		info.Width, info.Height = avihW, avihH
+		info.Width, info.Height = saneDim(avihW), saneDim(avihH)
 	}
 	switch {
 	case videoMs > 0:
 		info.DurationMs = videoMs
 	case dmlFrames > 0:
-		info.DurationMs = int64(dmlFrames) * int64(usPerFrame) / 1000
+		info.DurationMs = saneMs(float64(dmlFrames) * float64(usPerFrame) / 1000)
 	default:
-		info.DurationMs = int64(totalFrames) * int64(usPerFrame) / 1000
+		info.DurationMs = saneMs(float64(totalFrames) * float64(usPerFrame) / 1000)
 	}
 	return info, nil
 }
@@ -2063,7 +2294,18 @@ func aviAudio(strf []byte) Track {
 			t.Channels = 6
 		}
 	}
+	if t.Channels > maxChannels {
+		t.Channels = 0
+	}
 	return t
+}
+
+// saneDim reports frame sizes outside 1..65535 as unknown.
+func saneDim(n int) int {
+	if n < 0 || n > 65535 {
+		return 0
+	}
+	return n
 }
 
 func abs(n int) int {
@@ -2077,7 +2319,7 @@ func abs(n int) int {
 - [ ] **Step 4: Verificar que pasa**
 
 Run: `go vet ./internal/probe/... && go test ./internal/probe/ -v -run AVI`
-Expected: PASS (4 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: Commit**
 
