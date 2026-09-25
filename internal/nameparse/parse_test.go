@@ -41,6 +41,14 @@ func TestParseCorpus(t *testing.T) {
 		// glued to the title, since only the later bracket group was
 		// consumed as the year source.
 		{"[1975] Welfare (1975, 168')", Parsed{Title: "Welfare", Year: 1975, Countries: []string{"168'"}}},
+		// Real collection: bracketed site-credit tags without a "www."
+		// prefix (unlike the already-handled "(www.example.com)" noise)
+		// leaked into the title.
+		{"[1973] Juan Moreira [rodriguezalvarez.com]", Parsed{Title: "Juan Moreira", Year: 1973}},
+		// Real collection: French-subtitle tags leaked into the title the
+		// same way the existing [yts]/[rarbg]/[mkvonly] release tags do.
+		{"[1987] Blind [vostf]", Parsed{Title: "Blind", Year: 1987}},
+		{"[1976] Meat [Vost Fr]", Parsed{Title: "Meat", Year: 1976}},
 	}
 	for _, c := range cases {
 		if got := Parse(c.in); !reflect.DeepEqual(got, c.want) {

@@ -22,7 +22,7 @@ type Parsed struct {
 }
 
 var (
-	noiseRe        = regexp.MustCompile(`(?i)\(?(?:found\.via\.|emule\.via\.)?clan-sudamerica\.net\)?|\(?www\.[^\s()\[\]]+\)?|\s-\s*youtube\b|\[(?:yts|rarbg|eztv)[^\]]*\]|\[mkvonly\]`)
+	noiseRe        = regexp.MustCompile(`(?i)\(?(?:found\.via\.|emule\.via\.)?clan-sudamerica\.net\)?|\(?www\.[^\s()\[\]]+\)?|\s-\s*youtube\b|\[(?:yts|rarbg|eztv)[^\]]*\]|\[mkvonly\]|\[vostf\]|\[vost\s*fr\]|\[[^\[\]]*\.(?:com|net|org)\]`)
 	imdbRe         = regexp.MustCompile(`\btt\d{7,8}\b`)
 	yearDigitsRe   = regexp.MustCompile(`(?:18|19|20)\d{2}`)
 	bracketRe      = regexp.MustCompile(`[(\[]([^()\[\]]*)[)\]]`)
