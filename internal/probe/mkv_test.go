@@ -8,6 +8,22 @@ import (
 	pt "cinexplorer/internal/probe/probetest"
 )
 
+// failingReaderAt fails any read that touches an offset at or past fail, to
+// simulate a transient I/O error (e.g. an unplugged drive) partway through a
+// read; reads entirely before fail are served from b.
+type failingReaderAt struct {
+	b    []byte
+	fail int64
+}
+
+func (r failingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off+int64(len(p)) > r.fail {
+		return 0, errors.New("device not ready")
+	}
+	n := copy(p, r.b[off:])
+	return n, nil
+}
+
 func TestMKVBasic(t *testing.T) {
 	info, err := readMKV(src(pt.MKV(1920, 800, 6_300_000, "spa")))
 	if err != nil {
@@ -86,6 +102,55 @@ func TestMKVUnknownSizeSegmentAndTimecodeScale(t *testing.T) {
 	}
 	if got.DurationMs != 5_400_000 || got.VideoCodec != "hevc" || got.Width != 3840 {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestMKVIOErrorStaysErrIO(t *testing.T) {
+	// TrackType is the last element in the file: its 9-byte header (id+size)
+	// fits in readElem's 12-byte lookahead read, which also grabs the first
+	// 3 bytes of its 8-byte value, leaving the last 5 value bytes to be read
+	// separately by uintElem. Fail exactly at that boundary so the header
+	// read succeeds (parsing reaches uintElem) but the value read fails with
+	// a non-EOF error, which must surface as ErrIO, not ErrInvalid.
+	head := mkvHeader("matroska")
+	trackType := pt.EBMLUint(mkvTrackType, 1) // 1(id)+8(size)+8(data) = 17 bytes
+	te := pt.EBML(mkvTrackEntry, trackType)
+	tracks := pt.EBML(mkvTracks, te)
+	seg := pt.EBML(mkvSegment, tracks)
+	file := append(head, seg...)
+
+	fail := int64(len(file) - 5)
+	r := failingReaderAt{b: file, fail: fail}
+	if _, err := readMKV(newSource(r, int64(len(file)))); !errors.Is(err, ErrIO) {
+		t.Fatalf("err = %v, want ErrIO", err)
+	}
+}
+
+func TestMKVNegativeDurationIgnored(t *testing.T) {
+	file := append(mkvHeader("matroska"), pt.EBML(mkvSegment,
+		pt.EBML(mkvInfo, pt.EBMLFloat(mkvDuration, -5)),
+		pt.EBML(mkvTracks, track(1, "V_MPEG4/ISO/AVC")),
+	)...)
+	got, err := readMKV(src(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DurationMs != 0 {
+		t.Fatalf("DurationMs = %d, want 0", got.DurationMs)
+	}
+}
+
+func TestMKVAbsurdPixelWidthIgnored(t *testing.T) {
+	file := append(mkvHeader("matroska"), pt.EBML(mkvSegment,
+		pt.EBML(mkvTracks, track(1, "V_MPEG4/ISO/AVC",
+			pt.EBML(mkvVideo, pt.EBMLUint(mkvPixelWidth, 1<<40), pt.EBMLUint(mkvPixelHeight, 720)))),
+	)...)
+	got, err := readMKV(src(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Width != 0 {
+		t.Fatalf("Width = %d, want 0", got.Width)
 	}
 }
 

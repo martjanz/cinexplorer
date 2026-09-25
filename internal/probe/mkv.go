@@ -125,7 +125,10 @@ func (s *source) data(e ebmlElem) ([]byte, error) {
 
 func (s *source) uintElem(e ebmlElem) (uint64, error) {
 	b, err := s.data(e)
-	if err != nil || len(b) > 8 {
+	if err != nil {
+		return 0, err
+	}
+	if len(b) > 8 {
 		return 0, invalid("bad EBML uint")
 	}
 	var v uint64
@@ -279,7 +282,9 @@ func (s *source) mkvInfo(e ebmlElem, info *Info) error {
 		}
 		return true, err
 	})
-	info.DurationMs = int64(dur * float64(scale) / 1e6)
+	if d := dur * float64(scale) / 1e6; d > 0 && d < math.MaxInt64 { // NaN fails both comparisons
+		info.DurationMs = int64(d)
+	}
 	return err
 }
 
@@ -334,6 +339,12 @@ func (s *source) mkvTracks(e ebmlElem, segEnd int64, info *Info) error {
 		})
 		if err != nil {
 			return false, err
+		}
+		// Absurd values (corrupt or hostile headers) count as unknown.
+		for _, v := range []*uint64{&w, &h, &ch} {
+			if *v > 65535 {
+				*v = 0
+			}
 		}
 		if ietf != "" {
 			lang = ietf
