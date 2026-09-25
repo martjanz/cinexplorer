@@ -55,6 +55,10 @@ func TestParseCorpus(t *testing.T) {
 		// turning "DEPENDIENTE [multiplexado]" (not a name) into a fake
 		// director and leaving "EL" as the title.
 		{"EL_DEPENDIENTE [multiplexado]", Parsed{Title: "EL DEPENDIENTE [multiplexado]"}},
+		// Regression: listPrefixRe must only strip a zero-padded list index
+		// ("01 - ", "02 - ", ...) and never a bare number that's actually
+		// part of a real title, like "300" here.
+		{"300 - Rise of an Empire (2014)", Parsed{Title: "300 - Rise of an Empire", Year: 2014}},
 	}
 	for _, c := range cases {
 		if got := Parse(c.in); !reflect.DeepEqual(got, c.want) {

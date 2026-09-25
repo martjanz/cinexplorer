@@ -34,10 +34,13 @@ var (
 	yearPrefixRe   = regexp.MustCompile(`^\s*((?:18|19|20)\d{2})\s+-\s+(.+)$`)
 	lastFirstRe    = regexp.MustCompile(`^\s*([^,\-]+),\s*([^,\-]+?)\s+-\s+(.+)$`)
 	// listPrefixRe strips a numbered-list index ("01 - Title") from curated
-	// collection folders (e.g. "100 mejores pelis argentinas"). Capped at 3
-	// digits so it never overlaps a 4-digit year, which yearPrefixRe already
-	// handles.
-	listPrefixRe = regexp.MustCompile(`^\s*\d{1,3}\s*-\s+(.+)$`)
+	// collection folders (e.g. "100 mejores pelis argentinas"). It requires a
+	// leading zero (01-099) because that is the real-world convention for a
+	// zero-padded list index; without it the pattern would also fire on a
+	// real title that happens to start with a bare number and a hyphen (e.g.
+	// "300 - Rise of an Empire (2014)"), stripping a digit that's actually
+	// part of the title.
+	listPrefixRe = regexp.MustCompile(`^\s*0\d{1,2}\s*-\s+(.+)$`)
 	// leadingYearBracketRe matches a "[YYYY]" or "(YYYY)" tag at the very
 	// start of a name. Some collections repeat the year here in addition to
 	// a later "(Year, ...)" group; lastYearGroup always consumes the LAST
