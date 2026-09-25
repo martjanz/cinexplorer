@@ -24,7 +24,7 @@ type Parsed struct {
 var (
 	noiseRe        = regexp.MustCompile(`(?i)\(?(?:found\.via\.|emule\.via\.)?clan-sudamerica\.net\)?|\(?www\.[^\s()\[\]]+\)?|\s-\s*youtube\b|\[(?:yts|rarbg|eztv)[^\]]*\]|\[mkvonly\]`)
 	imdbRe         = regexp.MustCompile(`\btt\d{7,8}\b`)
-	yearRe         = regexp.MustCompile(`(?:^|[^0-9])((?:18|19|20)\d{2})(?:[^0-9p]|$)`)
+	yearDigitsRe   = regexp.MustCompile(`(?:18|19|20)\d{2}`)
 	bracketRe      = regexp.MustCompile(`[(\[]([^()\[\]]*)[)\]]`)
 	resRe          = regexp.MustCompile(`(?i)\b(?:2160p|1080p|1080i|720p|576p|480p|4k)\b`)
 	sourceRe       = regexp.MustCompile(`(?i)\b(?:blu-?ray|brrip|bdrip|web-?dl|webrip|dvdrip|dvdscr|hdtv|hdrip|vhsrip|tvrip)\b`)
@@ -116,12 +116,36 @@ func techIndex(s string, withLang bool) int {
 	return cut
 }
 
+// yearBoundaryOK reports whether the 4-digit run s[start:end] is not itself
+// part of a longer digit run and is not immediately followed by 'p' (e.g. the
+// "1080p" resolution tag). It replaces boundary bytes that used to be baked
+// into the match itself (and thus consumed, breaking FindAll on two nearby
+// years) with a peek at the surrounding bytes.
+func yearBoundaryOK(s string, start, end int) bool {
+	if start > 0 {
+		c := s[start-1]
+		if c >= '0' && c <= '9' {
+			return false
+		}
+	}
+	if end < len(s) {
+		c := s[end]
+		if (c >= '0' && c <= '9') || c == 'p' {
+			return false
+		}
+	}
+	return true
+}
+
 // yearAt returns the first plausible year in s and its offset, or 0, -1.
 func yearAt(s string) (int, int) {
-	for _, m := range yearRe.FindAllStringSubmatchIndex(s, -1) {
-		y, _ := strconv.Atoi(s[m[2]:m[3]])
+	for _, m := range yearDigitsRe.FindAllStringIndex(s, -1) {
+		if !yearBoundaryOK(s, m[0], m[1]) {
+			continue
+		}
+		y, _ := strconv.Atoi(s[m[0]:m[1]])
 		if y >= 1880 && y <= 2099 {
-			return y, m[2]
+			return y, m[0]
 		}
 	}
 	return 0, -1
@@ -131,12 +155,15 @@ func yearAt(s string) (int, int) {
 // the very start of s (a leading number is part of the title: "2001 A Space…").
 func lastYearBefore(s string, limit int) (int, int) {
 	year, at := 0, -1
-	for _, m := range yearRe.FindAllStringSubmatchIndex(s, -1) {
-		off := m[2]
+	for _, m := range yearDigitsRe.FindAllStringIndex(s, -1) {
+		off := m[0]
 		if off >= limit || strings.TrimSpace(s[:off]) == "" {
 			continue
 		}
-		if y, _ := strconv.Atoi(s[m[2]:m[3]]); y >= 1880 && y <= 2099 {
+		if !yearBoundaryOK(s, m[0], m[1]) {
+			continue
+		}
+		if y, _ := strconv.Atoi(s[m[0]:m[1]]); y >= 1880 && y <= 2099 {
 			year, at = y, off
 		}
 	}
@@ -185,7 +212,11 @@ func isCountry(s string) bool {
 	if countryNames[strings.ToLower(s)] {
 		return true
 	}
-	return len(s) <= 3 && s == strings.ToUpper(s) && strings.ToLower(s) != s
+	// Only a bare 2-letter all-caps token (e.g. "UK", "US") is treated as a
+	// country by heuristic. 3-letter all-caps tokens are common non-country
+	// release tags ("CC", "OST") and must instead be listed explicitly in
+	// countryNames (which already covers "usa", "uk", "urss", etc).
+	return len(s) == 2 && s == strings.ToUpper(s) && strings.ToLower(s) != s
 }
 
 // applyTitlePatterns handles "1976 - Title", "Last, First - Title" and

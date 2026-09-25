@@ -2,6 +2,7 @@ package nameparse
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -36,5 +37,34 @@ func TestParseCorpus(t *testing.T) {
 		if got := Parse(c.in); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("Parse(%q)\n got  %+v\n want %+v", c.in, got, c.want)
 		}
+	}
+}
+
+// TestYearBoundaryOverlap guards against a regression where two nearby years
+// separated by a single non-digit byte (e.g. a hyphen in a year range) were
+// not both discoverable, because the old yearRe pattern baked its boundary
+// check into the consumed match, and FindAll only returns non-overlapping
+// matches. yearAt must still find the first (leftmost) plausible year, and
+// lastYearBefore must still find the last (rightmost) plausible year before
+// a limit — even when the two years sit right next to each other.
+func TestYearBoundaryOverlap(t *testing.T) {
+	s := "Film 1974 1976 Sequel"
+
+	if y, off := yearAt(s); y != 1974 || off != strings.Index(s, "1974") {
+		t.Errorf("yearAt(%q) = (%d, %d), want (1974, %d)", s, y, off, strings.Index(s, "1974"))
+	}
+
+	if y, off := lastYearBefore(s, len(s)); y != 1976 || off != strings.Index(s, "1976") {
+		t.Errorf("lastYearBefore(%q, len) = (%d, %d), want (1976, %d)", s, y, off, strings.Index(s, "1976"))
+	}
+
+	// A hyphenated year range with no separating space is an even tighter
+	// case: only a single '-' byte separates the two years.
+	r := "(1967-1968)"
+	if y, off := yearAt(r); y != 1967 || off != strings.Index(r, "1967") {
+		t.Errorf("yearAt(%q) = (%d, %d), want (1967, %d)", r, y, off, strings.Index(r, "1967"))
+	}
+	if y, off := lastYearBefore(r, len(r)); y != 1968 || off != strings.Index(r, "1968") {
+		t.Errorf("lastYearBefore(%q, len) = (%d, %d), want (1968, %d)", r, y, off, strings.Index(r, "1968"))
 	}
 }
