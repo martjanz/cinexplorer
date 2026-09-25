@@ -38,6 +38,13 @@ var (
 	// digits so it never overlaps a 4-digit year, which yearPrefixRe already
 	// handles.
 	listPrefixRe = regexp.MustCompile(`^\s*\d{1,3}\s*-\s+(.+)$`)
+	// leadingYearBracketRe matches a "[YYYY]" or "(YYYY)" tag at the very
+	// start of a name. Some collections repeat the year here in addition to
+	// a later "(Year, ...)" group; lastYearGroup always consumes the LAST
+	// bracket group with a year, so without stripping this redundant leading
+	// tag first it is left dangling in the title with its closing bracket
+	// unbalanced (tidy only trims from the very edges).
+	leadingYearBracketRe = regexp.MustCompile(`^\s*[\[(](?:18|19|20)\d{2}[\])]\s*`)
 
 	sceneSeparators = strings.NewReplacer(".", " ", "_", " ")
 )
@@ -56,6 +63,11 @@ var countryNames = map[string]bool{
 func Parse(name string) Parsed {
 	var p Parsed
 	s := noiseRe.ReplaceAllString(name, " ")
+	leadYear := 0
+	if m := leadingYearBracketRe.FindString(s); m != "" {
+		leadYear, _ = strconv.Atoi(yearDigitsRe.FindString(m))
+		s = leadingYearBracketRe.ReplaceAllString(s, " ")
+	}
 	if id := imdbRe.FindString(s); id != "" {
 		p.IMDbID = id
 		s = imdbRe.ReplaceAllString(s, " ")
@@ -97,6 +109,9 @@ func Parse(name string) Parsed {
 	p.Title = tidy(s)
 	if p.Title == "" {
 		p.Title = tidy(sceneSeparators.Replace(name))
+	}
+	if p.Year == 0 {
+		p.Year = leadYear
 	}
 	return p
 }

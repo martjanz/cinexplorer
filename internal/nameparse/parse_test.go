@@ -36,6 +36,11 @@ func TestParseCorpus(t *testing.T) {
 		// argentinas") kept the list index as part of the title instead of
 		// stripping it like the "YYYY - Title" convention already does.
 		{"01 - LA CIÉNAGA (Lucrecia Martel, 2001)", Parsed{Title: "LA CIÉNAGA", Year: 2001, Director: "Lucrecia Martel"}},
+		// Real collection: a leading "[YYYY]" tag duplicating the year that
+		// also appears in a later "(Year, duration)" group left a stray "]"
+		// glued to the title, since only the later bracket group was
+		// consumed as the year source.
+		{"[1975] Welfare (1975, 168')", Parsed{Title: "Welfare", Year: 1975, Countries: []string{"168'"}}},
 	}
 	for _, c := range cases {
 		if got := Parse(c.in); !reflect.DeepEqual(got, c.want) {
