@@ -49,6 +49,12 @@ func TestParseCorpus(t *testing.T) {
 		// same way the existing [yts]/[rarbg]/[mkvonly] release tags do.
 		{"[1987] Blind [vostf]", Parsed{Title: "Blind", Year: 1987}},
 		{"[1976] Meat [Vost Fr]", Parsed{Title: "Meat", Year: 1976}},
+		// Real collection: the "Title_Director" convention (see "BuSan_Tsai
+		// Ming-lian" above) wrongly fired on a plain two-word title that just
+		// uses an underscore as a space next to a bracketed technical tag,
+		// turning "DEPENDIENTE [multiplexado]" (not a name) into a fake
+		// director and leaving "EL" as the title.
+		{"EL_DEPENDIENTE [multiplexado]", Parsed{Title: "EL DEPENDIENTE [multiplexado]"}},
 	}
 	for _, c := range cases {
 		if got := Parse(c.in); !reflect.DeepEqual(got, c.want) {

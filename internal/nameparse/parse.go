@@ -255,8 +255,14 @@ func applyTitlePatterns(s string, p *Parsed) string {
 	}
 	if strings.Count(s, "_") == 1 && strings.Contains(s, " ") && p.Director == "" {
 		i := strings.Index(s, "_")
-		p.Director = tidy(s[i+1:])
-		return s[:i]
+		// A bracket in the candidate director means this is really a
+		// technical tag (e.g. "[multiplexado]"), not a "Title_Director"
+		// name, so just treat the underscore as a plain space instead.
+		if rest := s[i+1:]; !strings.ContainsAny(rest, "[]") {
+			p.Director = tidy(rest)
+			return s[:i]
+		}
+		return strings.Replace(s, "_", " ", 1)
 	}
 	return s
 }
