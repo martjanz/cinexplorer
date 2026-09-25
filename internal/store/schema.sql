@@ -32,3 +32,20 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE INDEX IF NOT EXISTS files_fingerprint ON files(fingerprint);
 CREATE INDEX IF NOT EXISTS files_version ON files(version_id);
+
+-- Technical data read from each main video file (or DVD title set IFO).
+-- size/mtime are the file's at probe time: a mismatch means "probe again".
+CREATE TABLE IF NOT EXISTS media (
+  file_id     INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+  size        INTEGER NOT NULL,
+  mtime       INTEGER NOT NULL,
+  prober      TEXT    NOT NULL DEFAULT '',
+  error       TEXT    NOT NULL DEFAULT '',
+  container   TEXT    NOT NULL DEFAULT '',
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  width       INTEGER NOT NULL DEFAULT 0,
+  height      INTEGER NOT NULL DEFAULT 0,
+  video_codec TEXT    NOT NULL DEFAULT '',
+  audio       TEXT    NOT NULL DEFAULT '[]', -- JSON []probe.Track
+  subs        TEXT    NOT NULL DEFAULT '[]'  -- JSON []probe.Track
+);
