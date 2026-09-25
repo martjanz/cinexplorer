@@ -2623,6 +2623,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	pt "cinexplorer/internal/probe/probetest"
 )
@@ -2650,6 +2651,9 @@ func TestMain(m *testing.M) {
 	case "fail":
 		os.Stderr.WriteString("Invalid data found when processing input\n")
 		os.Exit(1)
+	case "hang":
+		time.Sleep(time.Minute)
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -2663,6 +2667,10 @@ func TestParseFFprobe(t *testing.T) {
 		Audio: []Track{{Codec: "cook", Lang: "es", Channels: 2}}, Prober: "ffprobe"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got  %+v\nwant %+v", got, want)
+	}
+	mkv, err := parseFFprobe([]byte(`{"streams": [{"codec_type": "video", "codec_name": "h264"}], "format": {"format_name": "matroska,webm"}}`))
+	if err != nil || mkv.Container != "matroska" {
+		t.Fatalf("container %q, %v", mkv.Container, err)
 	}
 	if _, err := parseFFprobe([]byte(`{"streams": [], "format": {}}`)); err == nil {
 		t.Fatal("no streams must be an error")
@@ -2748,6 +2756,29 @@ func TestProbeMissingFFprobeIsRetryable(t *testing.T) {
 		t.Fatalf("err = %v, want ErrIO", err)
 	}
 }
+
+func TestProbeFFprobeTimeout(t *testing.T) {
+	t.Setenv(fakeFFprobeEnv, "hang")
+	p := Prober{FFprobe: os.Args[0], Timeout: 300 * time.Millisecond}
+	file := write(t, "movie.rmvb", []byte(".RMF"))
+
+	// A hung ffprobe is a format problem of this file: stored, not retried.
+	start := time.Now()
+	_, err := p.Probe(context.Background(), file)
+	if !errors.Is(err, ErrUnsupported) || errors.Is(err, ErrIO) {
+		t.Fatalf("timeout: err = %v, want ErrUnsupported", err)
+	}
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatalf("ffprobe was not killed: took %v", d)
+	}
+
+	// A cancelled scan is not a property of the file.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.Probe(ctx, file); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled: err = %v, want context.Canceled", err)
+	}
+}
 ```
 
 - [ ] **Step 2: Verificar que falla**
@@ -2802,6 +2833,20 @@ func (p Prober) ffprobe(ctx context.Context, path string) (Info, error) {
 	return parseFFprobe(out)
 }
 
+// ffContainer turns ffprobe's format_name ("matroska,webm",
+// "mov,mp4,m4a,3gp,3g2,mj2", "avi") into the names the native readers use,
+// so a file read either way gets the same container.
+func ffContainer(name string) string {
+	switch {
+	case strings.HasPrefix(name, "matroska"):
+		return "matroska"
+	case strings.HasPrefix(name, "mov,mp4"):
+		return "mp4"
+	}
+	first, _, _ := strings.Cut(name, ",")
+	return first
+}
+
 type ffprobeOutput struct {
 	Streams []struct {
 		CodecType   string            `json:"codec_type"`
@@ -2823,7 +2868,7 @@ func parseFFprobe(out []byte) (Info, error) {
 	if err := json.Unmarshal(out, &o); err != nil {
 		return Info{}, fmt.Errorf("ffprobe output: %w", err)
 	}
-	info := Info{Container: o.Format.FormatName, Prober: "ffprobe"}
+	info := Info{Container: ffContainer(o.Format.FormatName), Prober: "ffprobe"}
 	if d, err := strconv.ParseFloat(o.Format.Duration, 64); err == nil {
 		info.DurationMs = saneMs(d * 1000)
 	}
@@ -2870,14 +2915,19 @@ import (
 )
 
 // Prober reads headers natively and falls back to ffprobe when the native
-// reader cannot parse the file or there is no reader for its extension.
+// reader cannot parse the file or there is no native reader for its content.
 type Prober struct {
 	FFprobe string        // path to ffprobe; "" disables the fallback
 	Timeout time.Duration // per ffprobe run; 0 means 30 s
 }
 
 var defaultProber = sync.OnceValue(func() Prober {
-	path, _ := exec.LookPath("ffprobe")
+	// An error (including exec.ErrDot: found only relative to the current
+	// directory, which exec refuses to run) means no fallback.
+	path, err := exec.LookPath("ffprobe")
+	if err != nil {
+		path = ""
+	}
 	return Prober{FFprobe: path}
 })
 
@@ -4273,8 +4323,8 @@ function versionRow(v) {
 
 - [ ] **Step 4: Verificar todo**
 
-Run: `gofmt -l ./internal ./cmd; go vet ./... && go test ./...`
-Expected: sin salida de `gofmt` y `ok` en todos los paquetes.
+Run: `git ls-files '*.go' | while read f; do git show ":$f" | gofmt -l | sed "s|<standard input>|$f|"; done; go vet ./... && go test ./...`
+Expected: ningún archivo listado y `ok` en todos los paquetes. (Se revisa el contenido del índice de git: con `core.autocrlf=true` en Windows, `gofmt -l` sobre la copia de trabajo lista todos los archivos por los CRLF.)
 
 - [ ] **Step 5: Commit**
 
