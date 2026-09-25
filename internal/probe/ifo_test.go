@@ -85,3 +85,20 @@ func TestIFOInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestIFOInvalidBCDIsIgnored(t *testing.T) {
+	ifo := buildIFO(0x5000, nil, nil,
+		[4]byte{0xFF, 0xFF, 0xFF, 0xFF},        // nibbles above 9
+		[4]byte{0x00, 0x99, 0x99, 0x40},        // 99 minutes, 99 seconds
+		[4]byte{0x0A, 0x00, 0x00, 0x40},        // hour nibble 0xA
+		[4]byte{0x01, 0x52, 0x07, 0x40},        // the real feature: 1:52:07
+		[4]byte{0x00, 0x00, 0x01, 0x40 | 0x25}, // frame 25 at 25 fps
+	)
+	got, err := readIFO(src(ifo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64((1*3600 + 52*60 + 7) * 1000); got.DurationMs != want {
+		t.Fatalf("DurationMs = %d, want %d", got.DurationMs, want)
+	}
+}

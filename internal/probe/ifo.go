@@ -41,8 +41,7 @@ func readIFO(s *source) (Info, error) {
 
 	for i := range min(int(be.Uint16(h[ifoAudioCount:])), 8) {
 		a := h[ifoAudioAttr+8*i:]
-		codec := map[byte]string{0: "ac3", 2: "mp2", 3: "mp2", 4: "pcm", 6: "dts"}[a[0]>>5]
-		info.Audio = append(info.Audio, Track{Codec: codec, Lang: ifoLang(a[0]>>2&3, a[2:4]), Channels: int(a[1]&7) + 1})
+		info.Audio = append(info.Audio, Track{Codec: ifoAudioCodecs[a[0]>>5], Lang: ifoLang(a[0]>>2&3, a[2:4]), Channels: int(a[1]&7) + 1})
 	}
 	for i := range min(int(be.Uint16(h[ifoSubpCount:])), 32) {
 		sp := h[ifoSubpAttr+6*i:]
@@ -56,6 +55,9 @@ func readIFO(s *source) (Info, error) {
 	info.DurationMs = dur
 	return info, nil
 }
+
+// ifoAudioCodecs maps the audio coding mode (3 bits) to codec names.
+var ifoAudioCodecs = [8]string{0: "ac3", 2: "mp2", 3: "mp2", 4: "pcm", 6: "dts"}
 
 func ifoLang(langType byte, code []byte) string {
 	if langType != 1 {
@@ -91,13 +93,33 @@ func (s *source) ifoLongestPGC(off int64) (int64, error) {
 }
 
 // dvdTime decodes a BCD playback time: hours, minutes, seconds, frames (the
-// two top bits of the last byte give the frame rate).
+// two top bits of the last byte give the frame rate). Invalid times return 0
+// so the PGC is ignored: some DVDs carry bogus PGCs as copy protection, and
+// one of them must not pass for the longest title.
 func dvdTime(t []byte) int64 {
-	bcd := func(b byte) int64 { return int64(b>>4)*10 + int64(b&0x0F) }
-	ms := bcd(t[0])*3_600_000 + bcd(t[1])*60_000 + bcd(t[2])*1000
-	fps := map[byte]int64{1: 25, 3: 30}[t[3]>>6]
+	var v [4]int64
+	for i, b := range t[:4] {
+		if i == 3 {
+			b &= 0x3F
+		}
+		if b>>4 > 9 || b&0x0F > 9 {
+			return 0
+		}
+		v[i] = int64(b>>4)*10 + int64(b&0x0F)
+	}
+	var fps int64
+	switch t[3] >> 6 {
+	case 1:
+		fps = 25
+	case 3:
+		fps = 30
+	}
+	if v[1] >= 60 || v[2] >= 60 || (fps > 0 && v[3] >= fps) {
+		return 0
+	}
+	ms := v[0]*3_600_000 + v[1]*60_000 + v[2]*1000
 	if fps > 0 {
-		ms += bcd(t[3]&0x3F) * 1000 / fps
+		ms += v[3] * 1000 / fps
 	}
 	return ms
 }
