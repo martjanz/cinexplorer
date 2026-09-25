@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cinexplorer</title>
+<style>
+  :root { --bg: #0f1115; --fg: #e8e8e8; --muted: #8b929a; --line: #1d2026; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 Inter, system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 24px; padding: 18px 32px; }
+  header b { font-weight: 800; letter-spacing: .04em; }
+  nav button { background: none; border: 0; color: var(--muted); font: inherit; cursor: pointer; padding: 0; margin-right: 18px; }
+  nav button.on { color: var(--fg); }
+  #status { margin-left: auto; color: var(--muted); font-size: 12px; }
+  main { padding: 0 32px 48px; }
+  input { width: 100%; max-width: 420px; background: #171a20; border: 1px solid #262a31; color: var(--fg);
+          padding: 8px 12px; border-radius: 4px; font: inherit; margin: 8px 0 16px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .t { font-weight: 600; } .t span { color: var(--muted); font-weight: 400; }
+  .meta, .path { color: var(--muted); font-size: 12px; } .path { word-break: break-all; }
+  .acts { white-space: nowrap; }
+  .acts button { background: none; border: 1px solid #30353d; color: var(--fg); border-radius: 3px;
+                 padding: 3px 10px; cursor: pointer; margin-left: 6px; font: inherit; font-size: 12px; }
+  .empty { color: var(--muted); padding: 40px 0; }
+  @media (max-width: 600px) { header, main { padding-left: 16px; padding-right: 16px; } .row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <b>CINEXPLORER</b>
+  <nav><button data-view="versions" class="on">Versiones</button><button data-view="copies">Copias idénticas</button></nav>
+  <div id="status"></div>
+</header>
+<main>
+  <input id="q" placeholder="Filtrar por título, director o carpeta…" autocomplete="off">
+  <div id="list"></div>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+let view = 'versions', versions = [], copies = [], wasRunning = false;
+
+const gb = (n) => (n / 1e9).toFixed(1) + ' GB';
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) alert(await r.text());
+}
+
+async function load() {
+  [versions, copies] = await Promise.all([
+    fetch('/api/versions').then((r) => r.json()),
+    fetch('/api/duplicates').then((r) => r.json()),
+  ]);
+  render();
+}
+
+function versionRow(v) {
+  const main = v.files.find((f) => f.role === 'main');
+  const tech = [v.resolution, v.source, v.codec].filter(Boolean).map(esc);
+  if (v.parts > 1) tech.push(v.parts + ' partes');
+  tech.push(gb(v.size));
+  if (v.subLangs) tech.push('subs ' + esc(v.subLangs));
+  return `<div class="row"><div>
+      <div class="t">${esc(v.title)} <span>${v.year || ''} ${v.director ? '· ' + esc(v.director) : ''}</span></div>
+      <div class="meta">${tech.join(' · ')}</div>
+      <div class="path">${esc(v.dir)}</div>
+    </div><div class="acts">${main ? `<button data-open="${esc(main.path)}">▶ Ver</button><button data-reveal="${esc(main.path)}">Carpeta</button>` : ''}</div></div>`;
+}
+
+function copyRow(c) {
+  return `<div class="row"><div>
+      <div class="t">${gb(c.size)} <span>× ${c.paths.length}</span></div>
+      ${c.paths.map((p) => `<div class="path">${esc(p)}</div>`).join('')}
+    </div><div class="acts"><button data-reveal="${esc(c.paths[0])}">Carpeta</button></div></div>`;
+}
+
+function render() {
+  const q = $('#q').value.trim().toLowerCase();
+  const rows = view === 'versions'
+    ? versions.filter((v) => !q || [v.title, v.director, v.dir].join(' ').toLowerCase().includes(q)).map(versionRow)
+    : copies.filter((c) => !q || c.paths.join(' ').toLowerCase().includes(q)).map(copyRow);
+  $('#list').innerHTML = rows.length ? rows.join('') : '<div class="empty">Sin resultados.</div>';
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.view) {
+    view = b.dataset.view;
+    document.querySelectorAll('nav button').forEach((n) => n.classList.toggle('on', n === b));
+    render();
+  }
+  if (b.dataset.open) post('/api/open', { path: b.dataset.open });
+  if (b.dataset.reveal) post('/api/reveal', { path: b.dataset.reveal });
+});
+$('#q').addEventListener('input', render);
+
+async function poll() {
+  const s = await fetch('/api/status').then((r) => r.json());
+  const sc = s.scan;
+  $('#status').textContent = s.readOnly ? 'Modo consulta (solo lectura)'
+    : sc.running ? `Escaneando… ${sc.files} archivos`
+    : sc.lastError ? 'Error: ' + sc.lastError
+    : `${versions.length} versiones`;
+  if (wasRunning && !sc.running) load();
+  wasRunning = sc.running;
+  setTimeout(poll, sc.running ? 1000 : 5000);
+}
+load().then(poll);
+</script>
+</body>
+</html>
