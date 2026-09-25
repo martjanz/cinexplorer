@@ -32,6 +32,10 @@ func TestParseCorpus(t *testing.T) {
 		{"2001.A.Space.Odyssey.1968.1080p.BluRay", Parsed{Title: "2001 A Space Odyssey", Year: 1968, Resolution: "1080p", Source: "BluRay"}},
 		{"Cortázar. Instrucciones de montaje (II)", Parsed{Title: "Cortázar. Instrucciones de montaje (II)"}},
 		{"AquelMartes-Monteaun", Parsed{Title: "AquelMartes-Monteaun"}},
+		// Real collection: numbered-list folders ("100 mejores pelis
+		// argentinas") kept the list index as part of the title instead of
+		// stripping it like the "YYYY - Title" convention already does.
+		{"01 - LA CIÉNAGA (Lucrecia Martel, 2001)", Parsed{Title: "LA CIÉNAGA", Year: 2001, Director: "Lucrecia Martel"}},
 	}
 	for _, c := range cases {
 		if got := Parse(c.in); !reflect.DeepEqual(got, c.want) {

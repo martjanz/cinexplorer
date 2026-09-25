@@ -33,6 +33,11 @@ var (
 	releaseGroupRe = regexp.MustCompile(`-([A-Za-z0-9]+)$`)
 	yearPrefixRe   = regexp.MustCompile(`^\s*((?:18|19|20)\d{2})\s+-\s+(.+)$`)
 	lastFirstRe    = regexp.MustCompile(`^\s*([^,\-]+),\s*([^,\-]+?)\s+-\s+(.+)$`)
+	// listPrefixRe strips a numbered-list index ("01 - Title") from curated
+	// collection folders (e.g. "100 mejores pelis argentinas"). Capped at 3
+	// digits so it never overlaps a 4-digit year, which yearPrefixRe already
+	// handles.
+	listPrefixRe = regexp.MustCompile(`^\s*\d{1,3}\s*-\s+(.+)$`)
 
 	sceneSeparators = strings.NewReplacer(".", " ", "_", " ")
 )
@@ -225,6 +230,9 @@ func applyTitlePatterns(s string, p *Parsed) string {
 	if m := yearPrefixRe.FindStringSubmatch(s); m != nil && p.Year == 0 {
 		p.Year, _ = strconv.Atoi(m[1])
 		return m[2]
+	}
+	if m := listPrefixRe.FindStringSubmatch(s); m != nil {
+		return m[1]
 	}
 	if m := lastFirstRe.FindStringSubmatch(s); m != nil && p.Director == "" {
 		p.Director = strings.TrimSpace(m[2]) + " " + strings.TrimSpace(m[1])
