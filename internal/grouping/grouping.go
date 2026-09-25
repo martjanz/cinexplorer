@@ -140,6 +140,12 @@ func buildDir(dir string, es []Entry, dirIsRoot bool) []Version {
 				continue
 			}
 			base, part := splitPart(name)
+			// The key is lowercased so that filenames differing only by case
+			// group into the same version. This relies on the target
+			// filesystem (exFAT/NTFS/APFS) treating case-only-differing
+			// names as the same path, so two such files can never coexist
+			// in one directory in the real deployment target; it is not an
+			// oversight.
 			key := strings.ToLower(base)
 			if part == 0 {
 				key += "|" + strings.ToLower(path.Ext(e.Path))
@@ -174,12 +180,29 @@ func buildDir(dir string, es []Entry, dirIsRoot bool) []Version {
 			continue
 		}
 		s := stem(e.Path)
-		if v := subtitleOwner(strings.ToLower(s), versions, keys); v != nil {
+		v := subtitleOwner(strings.ToLower(s), versions, keys)
+		if v == nil {
+			// No version's base name prefixes this subtitle and there is
+			// more than one version, so the single-version fallback in
+			// subtitleOwner didn't apply. Rather than silently dropping a
+			// real, catalogued file, attach it to the largest version in
+			// the dir.
+			v = largestVersion(versions)
+		}
+		if v != nil {
 			v.Members = append(v.Members, Member{Path: e.Path, Role: RoleSubtitle, Lang: subLang(s)})
 		}
 	}
 	if len(versions) == 1 {
 		versions[0].Members = append(versions[0].Members, extras...)
+	} else if len(extras) > 0 {
+		// Extras only auto-associate when the owner has exactly one
+		// version; with several versions there's no unambiguous match, but
+		// dropping the file entirely would silently lose it from the
+		// catalog. Attach it to the largest version instead.
+		if v := largestVersion(versions); v != nil {
+			v.Members = append(v.Members, extras...)
+		}
 	}
 
 	out := make([]Version, 0, len(versions))
@@ -197,6 +220,19 @@ func buildDir(dir string, es []Entry, dirIsRoot bool) []Version {
 		out = append(out, *v)
 	}
 	return out
+}
+
+// largestVersion returns the version with the largest total main-file Size,
+// breaking ties by the order versions were first seen. Returns nil for an
+// empty slice.
+func largestVersion(versions []*Version) *Version {
+	var best *Version
+	for _, v := range versions {
+		if best == nil || v.Size > best.Size {
+			best = v
+		}
+	}
+	return best
 }
 
 func isExtra(e Entry, name string, largest int64) bool {

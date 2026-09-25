@@ -111,6 +111,58 @@ func TestSubtitlesMatchByPrefix(t *testing.T) {
 	}
 }
 
+func TestOrphanedExtraAttachesToLargestVersion(t *testing.T) {
+	vs := Build([]Entry{
+		{"../cine-ordenar/Carandiru/Carandiru.avi", 700_000_000, mediafile.Video},
+		{"../cine-ordenar/Carandiru/Carandiru.mkv", 1_400_000_000, mediafile.Video},
+		{"../cine-ordenar/Carandiru/Carandiru-trailer.mp4", 50_000_000, mediafile.Video},
+	}, roots)
+	if len(vs) != 2 {
+		t.Fatalf("got %d versions: %+v", len(vs), vs)
+	}
+	var total int
+	for _, v := range vs {
+		for _, m := range v.Members {
+			if m.Role == RoleExtra {
+				total++
+				if v.Size != 1_400_000_000 {
+					t.Fatalf("extra attached to version with size %d, want largest (1_400_000_000)", v.Size)
+				}
+			}
+		}
+	}
+	if total != 1 {
+		t.Fatalf("want exactly 1 extra member across all versions, got %d", total)
+	}
+}
+
+func TestOrphanedSubtitleAttachesToLargestVersion(t *testing.T) {
+	dir := "../cine-ordenar/Aurora"
+	vs := Build([]Entry{
+		{dir + "/VIDEO_TS/VTS_01_1.VOB", 1_000_000_000, mediafile.DVD},
+		{dir + "/VIDEO_TS/VIDEO_TS.IFO", 20_000, mediafile.DVD},
+		{dir + "/Loose.mkv", 500_000, mediafile.Video},
+		{dir + "/NoPrefixMatch.srt", 1, mediafile.Subtitle},
+	}, roots)
+	if len(vs) != 2 {
+		t.Fatalf("got %d versions: %+v", len(vs), vs)
+	}
+	var total int
+	for _, v := range vs {
+		for _, m := range v.Members {
+			if m.Role == RoleSubtitle {
+				total++
+				if v.Size != 1_000_020_000 {
+					t.Fatalf("subtitle attached to version with size %d, want largest (1_000_020_000, the DVD)", v.Size)
+				}
+			}
+		}
+	}
+	if total != 1 {
+		t.Fatalf("want exactly 1 subtitle member across all versions, got %d", total)
+	}
+}
+
 func TestSplitPart(t *testing.T) {
 	cases := map[string]struct {
 		base string
