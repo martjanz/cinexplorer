@@ -2336,7 +2336,7 @@ git commit -m "feat(probe): native AVI header reader"
 - Create: `internal/probe/ifo.go`
 - Test: `internal/probe/ifo_test.go`
 
-Referencia (`VTS_xx_0.IFO`, big-endian): firma `DVDVIDEO-VTS` @0; sector de `VTS_PGCIT` @0xCC (× 2048 bytes); atributos de video u16 @0x200 (bits 15–14 MPEG-1/2, bits 13–12 NTSC/PAL, bits 3–2 tamaño 720/704/352/352×240|288); cantidad de audios u16 @0x202 y atributos de 8 bytes @0x204 (byte 0: formato en bits 7–5 — 0 AC3, 2/3 MPEG, 4 LPCM, 6 DTS —, tipo de idioma en bits 3–2; byte 1: canales−1 en bits 2–0; bytes 2–3: idioma ISO 639-1); cantidad de subpicture u16 @0x254 y atributos de 6 bytes @0x256 (tipo de idioma en bits 1–0 del byte 0; idioma en bytes 2–3). `VTS_PGCIT`: cantidad u16 @0, entradas de 8 bytes desde @8 con el offset de cada PGC u32 @+4; cada PGC tiene el tiempo de reproducción en BCD @4 (horas, minutos, segundos, frames con la tasa en los 2 bits altos: 01 = 25 fps, 11 = 30 fps). La duración del IFO es la PGC más larga.
+Referencia (`VTS_xx_0.IFO`, big-endian): firma `DVDVIDEO-VTS` @0; sector de `VTS_PGCIT` @0xCC (× 2048 bytes); atributos de video u16 @0x200 (bits 15–14 MPEG-1/2, bits 13–12 NTSC/PAL, bits 3–2 tamaño 720/704/352/352×240|288); cantidad de audios u16 @0x202 y atributos de 8 bytes @0x204 (byte 0: formato en bits 7–5 — 0 AC3, 2/3 MPEG, 4 LPCM, 6 DTS —, tipo de idioma en bits 3–2; byte 1: canales−1 en bits 2–0; bytes 2–3: idioma ISO 639-1); cantidad de subpicture u16 @0x254 y atributos de 6 bytes @0x256 (tipo de idioma en bits 1–0 del byte 0; idioma en bytes 2–3). `VTS_PGCIT`: cantidad u16 @0, entradas de 8 bytes desde @8 con el offset de cada PGC u32 @+4; cada PGC tiene el tiempo de reproducción en BCD @4 (horas, minutos, segundos, frames con la tasa en los 2 bits altos: 01 = 25 fps, 11 = 30 fps). La duración del IFO es la PGC más larga; los tiempos con BCD inválido (nibbles > 9, minutos/segundos ≥ 60, frames ≥ fps) valen 0, porque algunos DVDs traen PGCs falsos como protección anticopia.
 
 - [ ] **Step 1: Test que falla**
 
@@ -2430,6 +2430,23 @@ func TestIFOInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestIFOInvalidBCDIsIgnored(t *testing.T) {
+	ifo := buildIFO(0x5000, nil, nil,
+		[4]byte{0xFF, 0xFF, 0xFF, 0xFF},        // nibbles above 9
+		[4]byte{0x00, 0x99, 0x99, 0x40},        // 99 minutes, 99 seconds
+		[4]byte{0x0A, 0x00, 0x00, 0x40},        // hour nibble 0xA
+		[4]byte{0x01, 0x52, 0x07, 0x40},        // the real feature: 1:52:07
+		[4]byte{0x02, 0x00, 0x00, 0x40 | 0x25}, // frame 25 at 25 fps (longer than the feature)
+	)
+	got, err := readIFO(src(ifo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64((1*3600 + 52*60 + 7) * 1000); got.DurationMs != want {
+		t.Fatalf("DurationMs = %d, want %d", got.DurationMs, want)
+	}
+}
 ```
 
 - [ ] **Step 2: Verificar que falla**
@@ -2485,8 +2502,7 @@ func readIFO(s *source) (Info, error) {
 
 	for i := range min(int(be.Uint16(h[ifoAudioCount:])), 8) {
 		a := h[ifoAudioAttr+8*i:]
-		codec := map[byte]string{0: "ac3", 2: "mp2", 3: "mp2", 4: "pcm", 6: "dts"}[a[0]>>5]
-		info.Audio = append(info.Audio, Track{Codec: codec, Lang: ifoLang(a[0]>>2&3, a[2:4]), Channels: int(a[1]&7) + 1})
+		info.Audio = append(info.Audio, Track{Codec: ifoAudioCodecs[a[0]>>5], Lang: ifoLang(a[0]>>2&3, a[2:4]), Channels: int(a[1]&7) + 1})
 	}
 	for i := range min(int(be.Uint16(h[ifoSubpCount:])), 32) {
 		sp := h[ifoSubpAttr+6*i:]
@@ -2500,6 +2516,9 @@ func readIFO(s *source) (Info, error) {
 	info.DurationMs = dur
 	return info, nil
 }
+
+// ifoAudioCodecs maps the audio coding mode (3 bits) to codec names.
+var ifoAudioCodecs = [8]string{0: "ac3", 2: "mp2", 3: "mp2", 4: "pcm", 6: "dts"}
 
 func ifoLang(langType byte, code []byte) string {
 	if langType != 1 {
@@ -2535,13 +2554,33 @@ func (s *source) ifoLongestPGC(off int64) (int64, error) {
 }
 
 // dvdTime decodes a BCD playback time: hours, minutes, seconds, frames (the
-// two top bits of the last byte give the frame rate).
+// two top bits of the last byte give the frame rate). Invalid times return 0
+// so the PGC is ignored: some DVDs carry bogus PGCs as copy protection, and
+// one of them must not pass for the longest title.
 func dvdTime(t []byte) int64 {
-	bcd := func(b byte) int64 { return int64(b>>4)*10 + int64(b&0x0F) }
-	ms := bcd(t[0])*3_600_000 + bcd(t[1])*60_000 + bcd(t[2])*1000
-	fps := map[byte]int64{1: 25, 3: 30}[t[3]>>6]
+	var v [4]int64
+	for i, b := range t[:4] {
+		if i == 3 {
+			b &= 0x3F
+		}
+		if b>>4 > 9 || b&0x0F > 9 {
+			return 0
+		}
+		v[i] = int64(b>>4)*10 + int64(b&0x0F)
+	}
+	var fps int64
+	switch t[3] >> 6 {
+	case 1:
+		fps = 25
+	case 3:
+		fps = 30
+	}
+	if v[1] >= 60 || v[2] >= 60 || (fps > 0 && v[3] >= fps) {
+		return 0
+	}
+	ms := v[0]*3_600_000 + v[1]*60_000 + v[2]*1000
 	if fps > 0 {
-		ms += bcd(t[3]&0x3F) * 1000 / fps
+		ms += v[3] * 1000 / fps
 	}
 	return ms
 }
@@ -2550,7 +2589,7 @@ func dvdTime(t []byte) int64 {
 - [ ] **Step 4: Verificar que pasa**
 
 Run: `go vet ./internal/probe/... && go test ./internal/probe/ -v -run IFO`
-Expected: PASS (3 tests)
+Expected: PASS (4 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -2568,7 +2607,7 @@ git commit -m "feat(probe): DVD title set IFO reader"
 - Create: `internal/probe/prober.go`
 - Test: `internal/probe/prober_test.go`
 
-`Probe` abre el archivo (fallo → `ErrIO`), elige el lector por los primeros 16 bytes (la colección tiene `.avi` que son Matroska o ASF) y, si el lector nativo da `ErrInvalid` o no hay lector, prueba `ffprobe` cuando está configurado. El test usa el propio binario de test como `ffprobe` falso (`TestMain` responde según una variable de entorno), así no depende de que `ffprobe` esté instalado.
+`Probe` abre el archivo (fallo → `ErrIO`), elige el lector por los primeros 16 bytes (la colección tiene `.avi` que son Matroska o ASF) y, si el lector nativo da `ErrInvalid` o no hay lector, prueba `ffprobe` cuando está configurado. Si `ffprobe` no puede ejecutarse (desapareció del PATH, sin permisos), el error es `ErrIO`: es un problema de la máquina y el archivo se reintenta en otro escaneo; si ffprobe corre y falla, o no responde en 30 s, cuenta como error de formato. Los valores que devuelve pasan por los mismos límites que los lectores propios (`saneMs`, `saneDim`, `maxChannels`). El test usa el propio binario de test como `ffprobe` falso (`TestMain` responde según una variable de entorno), así no depende de que `ffprobe` esté instalado.
 
 - [ ] **Step 1: Test que falla**
 
@@ -2627,6 +2666,12 @@ func TestParseFFprobe(t *testing.T) {
 	}
 	if _, err := parseFFprobe([]byte(`{"streams": [], "format": {}}`)); err == nil {
 		t.Fatal("no streams must be an error")
+	}
+	absurd := `{"streams": [{"codec_type": "video", "codec_name": "h264", "width": 100000, "height": -1},
+		{"codec_type": "audio", "codec_name": "aac", "channels": 1000}], "format": {"duration": "-5"}}`
+	got, err = parseFFprobe([]byte(absurd))
+	if err != nil || got.DurationMs != 0 || got.Width != 0 || got.Height != 0 || got.Audio[0].Channels != 0 {
+		t.Fatalf("absurd values: %+v, %v", got, err)
 	}
 }
 
@@ -2694,6 +2739,15 @@ func TestProbeFallsBackToFFprobe(t *testing.T) {
 		t.Fatalf("failed fallback: %v, want the native ErrInvalid", err)
 	}
 }
+
+func TestProbeMissingFFprobeIsRetryable(t *testing.T) {
+	// An ffprobe that cannot start is a problem of this machine, not of the
+	// file: the scanner must try the file again later.
+	p := Prober{FFprobe: filepath.Join(t.TempDir(), "no-ffprobe.exe")}
+	if _, err := p.Probe(context.Background(), write(t, "movie.rmvb", []byte(".RMF"))); !errors.Is(err, ErrIO) {
+		t.Fatalf("err = %v, want ErrIO", err)
+	}
+}
 ```
 
 - [ ] **Step 2: Verificar que falla**
@@ -2711,6 +2765,7 @@ package probe
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -2730,10 +2785,19 @@ func (p Prober) ffprobe(ctx context.Context, path string) (Info, error) {
 	out, err := exec.CommandContext(ctx, p.FFprobe,
 		"-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-i", path).Output()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
-			return Info{}, fmt.Errorf("%v: %s", err, strings.TrimSpace(string(ee.Stderr)))
+		var ee *exec.ExitError
+		switch {
+		case ctx.Err() != nil:
+			return Info{}, fmt.Errorf("ffprobe gave no answer in %v", timeout)
+		case errors.As(err, &ee):
+			if len(ee.Stderr) > 0 {
+				return Info{}, fmt.Errorf("%v: %s", err, strings.TrimSpace(string(ee.Stderr)))
+			}
+			return Info{}, err
 		}
-		return Info{}, err
+		// ffprobe could not start at all: a problem of this machine, not of
+		// the file, so the file is tried again on a later scan.
+		return Info{}, fmt.Errorf("%w: cannot run ffprobe: %v", ErrIO, err)
 	}
 	return parseFFprobe(out)
 }
@@ -2761,7 +2825,7 @@ func parseFFprobe(out []byte) (Info, error) {
 	}
 	info := Info{Container: o.Format.FormatName, Prober: "ffprobe"}
 	if d, err := strconv.ParseFloat(o.Format.Duration, 64); err == nil {
-		info.DurationMs = int64(d * 1000)
+		info.DurationMs = saneMs(d * 1000)
 	}
 	for _, st := range o.Streams {
 		lang := normLang(st.Tags["language"])
@@ -2769,10 +2833,14 @@ func parseFFprobe(out []byte) (Info, error) {
 		case "video":
 			if info.VideoCodec == "" && st.Disposition["attached_pic"] == 0 {
 				info.VideoCodec = normFFCodec(st.CodecName)
-				info.Width, info.Height = st.Width, st.Height
+				info.Width, info.Height = saneDim(st.Width), saneDim(st.Height)
 			}
 		case "audio":
-			info.Audio = append(info.Audio, Track{Codec: normFFCodec(st.CodecName), Lang: lang, Channels: st.Channels})
+			ch := st.Channels
+			if ch < 0 || ch > maxChannels {
+				ch = 0
+			}
+			info.Audio = append(info.Audio, Track{Codec: normFFCodec(st.CodecName), Lang: lang, Channels: ch})
 		case "subtitle":
 			info.Subs = append(info.Subs, Track{Codec: normFFCodec(st.CodecName), Lang: lang})
 		}
@@ -2872,6 +2940,9 @@ func (p Prober) Probe(ctx context.Context, path string) (Info, error) {
 	if err != nil {
 		if ctx.Err() != nil {
 			return Info{}, ctx.Err()
+		}
+		if errors.Is(err, ErrIO) {
+			return Info{}, err
 		}
 		return Info{}, fmt.Errorf("%w; ffprobe: %v", nativeErr, err)
 	}

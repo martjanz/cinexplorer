@@ -148,6 +148,8 @@ Store:
 - Archivo que desaparece o no se puede leer durante el análisis → `ErrIO`, sin fila, se reintenta.
 - Encabezado corrupto → fila con `error`; la versión usa datos del nombre.
 - `ffprobe` que cuelga → timeout de 30 s, se trata como error de formato.
+- `ffprobe` que no puede ejecutarse → `ErrIO` (problema de la máquina, no del archivo): se reintenta.
+- Valores absurdos de un encabezado corrupto (duración negativa, NaN o de más de una semana; dimensiones fuera de 0..65535; más de 64 canales; tiempos BCD inválidos en un IFO) → desconocidos (0).
 - Disco desconectado a mitad de la fase → los lotes ya guardados quedan; el resto se retoma en el próximo escaneo.
 
 ## 9. Pruebas
