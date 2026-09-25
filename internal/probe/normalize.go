@@ -150,3 +150,26 @@ func wavFormat(tag uint16) string {
 	}
 	return ""
 }
+
+// aacChannels reads channelConfiguration from an AudioSpecificConfig.
+func aacChannels(asc []byte) int {
+	if len(asc) < 2 || asc[0]>>3 == 31 { // escaped object types are rare: skip
+		return 0
+	}
+	var cfg byte
+	if freq := (asc[0]&7)<<1 | asc[1]>>7; freq == 15 { // explicit 24-bit frequency
+		if len(asc) < 5 {
+			return 0
+		}
+		cfg = (asc[4] >> 3) & 0xF
+	} else {
+		cfg = (asc[1] >> 3) & 0xF
+	}
+	switch {
+	case cfg >= 1 && cfg <= 6:
+		return int(cfg)
+	case cfg == 7:
+		return 8
+	}
+	return 0
+}
