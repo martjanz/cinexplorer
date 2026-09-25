@@ -2,6 +2,8 @@ package probe
 
 import (
 	"encoding/binary"
+	"errors"
+	"math"
 	"strings"
 )
 
@@ -104,14 +106,10 @@ func readMP4(s *source) (Info, error) {
 			if err != nil {
 				return false, err
 			}
-			var scale, dur uint64
 			if len(d) >= 32 && d[0] == 1 {
-				scale, dur = uint64(binary.BigEndian.Uint32(d[20:])), binary.BigEndian.Uint64(d[24:])
+				info.DurationMs = mp4Duration(binary.BigEndian.Uint64(d[24:]), uint64(binary.BigEndian.Uint32(d[20:])), math.MaxUint64)
 			} else if len(d) >= 20 {
-				scale, dur = uint64(binary.BigEndian.Uint32(d[12:])), uint64(binary.BigEndian.Uint32(d[16:]))
-			}
-			if scale > 0 {
-				info.DurationMs = int64(dur * 1000 / scale)
+				info.DurationMs = mp4Duration(uint64(binary.BigEndian.Uint32(d[16:])), uint64(binary.BigEndian.Uint32(d[12:])), math.MaxUint32)
 			}
 		case "trak":
 			t, err := s.mp4Trak(b)
@@ -158,62 +156,96 @@ func isFourCC(s string) bool {
 	return true
 }
 
+// mp4Duration converts a movie duration to milliseconds without overflowing.
+// A duration of all ones means "unknown" (fragmented or live files).
+func mp4Duration(dur, scale, unknown uint64) int64 {
+	if scale == 0 || dur == unknown || dur/scale > math.MaxInt64/1000 {
+		return 0
+	}
+	return int64(dur/scale*1000 + dur%scale*1000/scale)
+}
+
+// childBox returns the first child of parent with the given type, or nil.
+func (s *source) childBox(parent mp4Box, typ string) (*mp4Box, error) {
+	var found *mp4Box
+	err := boxes(s, parent.dataOff, parent.end, func(b mp4Box) (bool, error) {
+		if b.typ == typ {
+			found = &b
+			return false, nil
+		}
+		return true, nil
+	})
+	return found, err
+}
+
+// mp4Trak reads a track. It only descends along the paths that hold what we
+// need (trak/tkhd, trak/tref/chap, trak/mdia/{hdlr,mdhd}, trak/mdia/minf/stbl/
+// stsd), so nesting in a crafted file cannot drive recursion. Taking hdlr only
+// from mdia also skips the data-reference hdlr QuickTime puts inside minf.
 func (s *source) mp4Trak(trak mp4Box) (mp4Track, error) {
 	var t mp4Track
 	var stsd *mp4Box
-	var walk func(off, end int64) error
-	walk = func(off, end int64) error {
-		return boxes(s, off, end, func(b mp4Box) (bool, error) {
-			switch b.typ {
-			case "mdia", "minf", "stbl", "tref":
-				return true, walk(b.dataOff, b.end)
-			case "tkhd":
-				d, err := s.boxData(b, 24)
-				if err != nil {
-					return false, err
-				}
-				if len(d) >= 24 && d[0] == 1 {
-					t.id = binary.BigEndian.Uint32(d[20:])
-				} else if len(d) >= 16 {
-					t.id = binary.BigEndian.Uint32(d[12:])
-				}
-			case "chap":
-				d, err := s.boxData(b, 256)
-				if err != nil {
-					return false, err
-				}
-				for i := 0; i+4 <= len(d); i += 4 {
-					t.chapter = append(t.chapter, binary.BigEndian.Uint32(d[i:]))
-				}
-			case "hdlr":
-				d, err := s.boxData(b, 12)
-				if err != nil {
-					return false, err
-				}
-				// QuickTime files carry a second, data-reference hdlr inside
-				// minf; the media handler is the one in mdia, seen first.
-				if len(d) >= 12 && t.handler == "" {
-					t.handler = string(d[8:12])
-				}
-			case "mdhd":
-				d, err := s.boxData(b, 34)
-				if err != nil {
-					return false, err
-				}
-				at := 20
-				if len(d) > 0 && d[0] == 1 {
-					at = 32
-				}
-				if len(d) >= at+2 {
-					t.lang = mp4Lang(binary.BigEndian.Uint16(d[at:]))
-				}
-			case "stsd":
-				stsd = &b
+	err := boxes(s, trak.dataOff, trak.end, func(b mp4Box) (bool, error) {
+		switch b.typ {
+		case "tkhd":
+			d, err := s.boxData(b, 24)
+			if err != nil {
+				return false, err
 			}
-			return true, nil
-		})
-	}
-	if err := walk(trak.dataOff, trak.end); err != nil {
+			if len(d) >= 24 && d[0] == 1 {
+				t.id = binary.BigEndian.Uint32(d[20:])
+			} else if len(d) >= 16 {
+				t.id = binary.BigEndian.Uint32(d[12:])
+			}
+		case "tref":
+			chap, err := s.childBox(b, "chap")
+			if err != nil || chap == nil {
+				return err == nil, err
+			}
+			d, err := s.boxData(*chap, 256)
+			if err != nil {
+				return false, err
+			}
+			for i := 0; i+4 <= len(d); i += 4 {
+				t.chapter = append(t.chapter, binary.BigEndian.Uint32(d[i:]))
+			}
+		case "mdia":
+			return true, boxes(s, b.dataOff, b.end, func(c mp4Box) (bool, error) {
+				switch c.typ {
+				case "hdlr":
+					d, err := s.boxData(c, 12)
+					if err != nil {
+						return false, err
+					}
+					if len(d) >= 12 {
+						t.handler = string(d[8:12])
+					}
+				case "mdhd":
+					d, err := s.boxData(c, 34)
+					if err != nil {
+						return false, err
+					}
+					at := 20
+					if len(d) > 0 && d[0] == 1 {
+						at = 32
+					}
+					if len(d) >= at+2 {
+						t.lang = mp4Lang(binary.BigEndian.Uint16(d[at:]))
+					}
+				case "minf":
+					stbl, err := s.childBox(c, "stbl")
+					if err != nil || stbl == nil {
+						return err == nil, err
+					}
+					stsd, err = s.childBox(*stbl, "stsd")
+					return err == nil, err
+				}
+				return true, nil
+			})
+		}
+		return true, nil
+	})
+	if err != nil {
 		return t, err
 	}
 	if stsd != nil {
@@ -233,6 +265,10 @@ func mp4Lang(v uint16) string {
 	b := []byte{byte(v>>10&0x1F) + 0x60, byte(v>>5&0x1F) + 0x60, byte(v&0x1F) + 0x60}
 	return normLang(string(b))
 }
+
+// maxChannels caps channel counts read from headers; larger values come from
+// corrupt files and are reported as unknown.
+const maxChannels = 64
 
 // mp4SampleEntry reads the first sample description of a track.
 func (s *source) mp4SampleEntry(stsd mp4Box, t *mp4Track) error {
@@ -254,28 +290,49 @@ func (s *source) mp4SampleEntry(stsd mp4Box, t *mp4Track) error {
 		}
 		t.codec = mp4VideoCodec(entry.typ)
 		if entry.typ == "mp4v" {
-			if es, ok := s.mp4ESDS(entry, 78); ok {
+			es, ok, err := s.mp4ESDS(entry, 78)
+			if err != nil {
+				return err
+			}
+			if ok {
 				t.codec = mpeg4VideoObject(es.objectType)
 			}
 		}
 	case "soun":
-		if len(d) >= 18 {
+		version := uint16(0)
+		if len(d) >= 10 {
+			version = binary.BigEndian.Uint16(d[8:])
+		}
+		switch {
+		case version == 2 && len(d) >= 44:
+			// QuickTime SoundDescription v2: @16 is a constant 3, the
+			// real count is a u32 at @40.
+			t.ch = int(min(binary.BigEndian.Uint32(d[40:]), maxChannels+1))
+		case len(d) >= 18:
 			t.ch = int(binary.BigEndian.Uint16(d[16:]))
 		}
-		t.codec = mp4AudioCodec(entry.typ)
-		start := int64(0)
-		if len(d) >= 10 {
-			start = map[uint16]int64{0: 28, 1: 44, 2: 64}[binary.BigEndian.Uint16(d[8:])]
+		if t.ch > maxChannels {
+			t.ch = 0
 		}
-		if entry.typ == "ac-3" {
-			if ch := s.mp4AC3Channels(entry, start); ch > 0 {
+		t.codec = mp4AudioCodec(entry.typ)
+		start := map[uint16]int64{0: 28, 1: 44, 2: 64}[version]
+		switch entry.typ {
+		case "ac-3":
+			ch, err := s.mp4AC3Channels(entry, start)
+			if err != nil {
+				return err
+			}
+			if ch > 0 {
 				t.ch = ch // stsd often says 2 whatever the stream has
 			}
-		}
-		if entry.typ == "mp4a" {
-			if es, ok := s.mp4ESDS(entry, start); ok {
+		case "mp4a":
+			es, ok, err := s.mp4ESDS(entry, start)
+			if err != nil {
+				return err
+			}
+			if ok {
 				t.codec = mpeg4AudioObject(es.objectType)
-				if es.channels > 0 {
+				if t.codec == "aac" && es.channels > 0 {
 					t.ch = es.channels // stsd often says 2 whatever the stream has
 				}
 			}
@@ -286,24 +343,36 @@ func (s *source) mp4SampleEntry(stsd mp4Box, t *mp4Track) error {
 	return nil
 }
 
+// optional drops format errors in boxes that only refine what we already
+// know, but keeps read errors: those must reach the caller to be retried.
+func optional(err error) error {
+	if errors.Is(err, ErrInvalid) {
+		return nil
+	}
+	return err
+}
+
+// sampleEntryChildren is the span holding a sample entry's child boxes.
+func sampleEntryChildren(entry mp4Box, childOff int64) mp4Box {
+	return mp4Box{typ: entry.typ, dataOff: entry.dataOff + childOff, end: entry.end}
+}
+
 // mp4AC3Channels reads the channel layout from the dac3 box of an "ac-3"
 // sample entry: acmod gives the full-range channels, lfeon adds the LFE.
-func (s *source) mp4AC3Channels(entry mp4Box, childOff int64) int {
+func (s *source) mp4AC3Channels(entry mp4Box, childOff int64) (int, error) {
 	if childOff == 0 {
-		return 0
+		return 0, nil
 	}
-	ch := 0
-	boxes(s, entry.dataOff+childOff, entry.end, func(b mp4Box) (bool, error) {
-		if b.typ != "dac3" {
-			return true, nil
-		}
-		if d, err := s.boxData(b, 3); err == nil && len(d) == 3 {
-			v := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
-			ch = []int{2, 1, 2, 3, 3, 4, 4, 5}[v>>11&7] + int(v>>10&1)
-		}
-		return false, nil
-	})
-	return ch
+	dac3, err := s.childBox(sampleEntryChildren(entry, childOff), "dac3")
+	if err != nil || dac3 == nil {
+		return 0, optional(err)
+	}
+	d, err := s.boxData(*dac3, 3)
+	if err != nil || len(d) < 3 {
+		return 0, optional(err)
+	}
+	v := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
+	return []int{2, 1, 2, 3, 3, 4, 4, 5}[v>>11&7] + int(v>>10&1), nil
 }
 
 // esdsInfo is what we use from an MPEG-4 elementary stream descriptor.
@@ -312,30 +381,29 @@ type esdsInfo struct {
 	channels   int // from the AAC AudioSpecificConfig; 0 when absent
 }
 
-// mp4ESDS finds the esds box among the children of a sample entry (directly
-// or inside a QuickTime "wave" box) and parses it.
-func (s *source) mp4ESDS(entry mp4Box, childOff int64) (esdsInfo, bool) {
+// mp4ESDS finds the esds box among the children of a sample entry, or inside
+// its QuickTime "wave" child, and parses it.
+func (s *source) mp4ESDS(entry mp4Box, childOff int64) (esdsInfo, bool, error) {
 	if childOff == 0 {
-		return esdsInfo{}, false
+		return esdsInfo{}, false, nil
 	}
-	var es esdsInfo
-	var found bool
-	var walk func(off, end int64)
-	walk = func(off, end int64) {
-		boxes(s, off, end, func(b mp4Box) (bool, error) {
-			switch b.typ {
-			case "wave":
-				walk(b.dataOff, b.end)
-			case "esds":
-				if d, err := s.boxData(b, 128); err == nil {
-					es, found = parseESDS(d)
-				}
-			}
-			return !found, nil
-		})
+	kids := sampleEntryChildren(entry, childOff)
+	esds, err := s.childBox(kids, "esds")
+	if err == nil && esds == nil {
+		var wave *mp4Box
+		if wave, err = s.childBox(kids, "wave"); err == nil && wave != nil {
+			esds, err = s.childBox(*wave, "esds")
+		}
 	}
-	walk(entry.dataOff+childOff, entry.end)
-	return es, found
+	if err != nil || esds == nil {
+		return esdsInfo{}, false, optional(err)
+	}
+	d, err := s.boxData(*esds, 128)
+	if err != nil {
+		return esdsInfo{}, false, optional(err)
+	}
+	es, ok := parseESDS(d)
+	return es, ok, nil
 }
 
 // parseESDS parses an esds payload: version/flags, then an ES_Descriptor

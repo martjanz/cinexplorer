@@ -3,6 +3,7 @@ package probe
 import (
 	"bytes"
 	"errors"
+	"math"
 	"reflect"
 	"testing"
 
@@ -118,6 +119,63 @@ func TestMP4QuickTimeHandlerAndAC3Channels(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(got.Audio, []Track{{Codec: "ac3", Lang: "en", Channels: 6}}) {
+		t.Fatalf("audio %+v", got.Audio)
+	}
+}
+
+func TestMP4DeepNestingIsBounded(t *testing.T) {
+	// moov > trak > mdia > mdia > … (16 MB): only real paths are followed,
+	// so nesting cannot drive recursion. A generic recursive walker hit a
+	// fatal stack overflow on this file.
+	const depth = 2_000_000
+	var b bytes.Buffer
+	b.Write(pt.U32BE(uint32(16 + 8*depth)))
+	b.WriteString("moov")
+	b.Write(pt.U32BE(uint32(8 + 8*depth)))
+	b.WriteString("trak")
+	for i := range depth {
+		b.Write(pt.U32BE(uint32(8 * (depth - i))))
+		b.WriteString("mdia")
+	}
+	got, err := readMP4(src(join(pt.Box("ftyp", zeros(8)), b.Bytes())))
+	if err != nil || got.VideoCodec != "" || len(got.Audio) != 0 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+func TestMP4UnknownOrHugeDuration(t *testing.T) {
+	for name, mvhd := range map[string][]byte{
+		"v0 all ones": pt.FullBox("mvhd", 0, zeros(8), pt.U32BE(1000), pt.U32BE(0xFFFFFFFF)),
+		"v1 all ones": pt.FullBox("mvhd", 1, zeros(16), pt.U32BE(1), pt.U64BE(math.MaxUint64)),
+		"v1 overflow": pt.FullBox("mvhd", 1, zeros(16), pt.U32BE(1), pt.U64BE(1<<62)),
+	} {
+		got, err := readMP4(src(join(pt.Box("ftyp", zeros(8)), pt.Box("moov", mvhd))))
+		if err != nil || got.DurationMs != 0 {
+			t.Errorf("%s: DurationMs = %d, err = %v; want 0, nil", name, got.DurationMs, err)
+		}
+	}
+}
+
+func TestMP4ReadErrorInESDSIsReported(t *testing.T) {
+	file := join(pt.Box("ftyp", zeros(8)), pt.Box("moov",
+		mp4Trak(1, "soun", "eng", audioEntry("mp4a", 2, pt.Box("free", zeros(40)), esds(0x40)))))
+	// The padding keeps esds past the 64 bytes read from the sample entry, so
+	// only the esds read itself hits the failing region.
+	at := int64(bytes.LastIndex(file, []byte("esds")))
+	r := failingReaderAt{b: file, fail: at + 5} // the esds header reads fine, its data does not
+	if _, err := readMP4(newSource(r, int64(len(file)))); !errors.Is(err, ErrIO) {
+		t.Fatalf("err = %v, want ErrIO", err)
+	}
+}
+
+func TestMP4QuickTimeV2SoundChannels(t *testing.T) {
+	// SoundDescription v2: @16 always says 3; the channel count is a u32 at @40.
+	entry := pt.Box("lpcm", zeros(8), pt.U16BE(2), zeros(6), pt.U16BE(3), zeros(22), pt.U32BE(6), zeros(20))
+	got, err := readMP4(src(join(pt.Box("ftyp", zeros(8)), pt.Box("moov", mp4Trak(1, "soun", "eng", entry)))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Audio, []Track{{Codec: "pcm", Lang: "en", Channels: 6}}) {
 		t.Fatalf("audio %+v", got.Audio)
 	}
 }
