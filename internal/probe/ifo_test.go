@@ -92,7 +92,7 @@ func TestIFOInvalidBCDIsIgnored(t *testing.T) {
 		[4]byte{0x00, 0x99, 0x99, 0x40},        // 99 minutes, 99 seconds
 		[4]byte{0x0A, 0x00, 0x00, 0x40},        // hour nibble 0xA
 		[4]byte{0x01, 0x52, 0x07, 0x40},        // the real feature: 1:52:07
-		[4]byte{0x00, 0x00, 0x01, 0x40 | 0x25}, // frame 25 at 25 fps
+		[4]byte{0x02, 0x00, 0x00, 0x40 | 0x25}, // frame 25 at 25 fps (longer than the feature)
 	)
 	got, err := readIFO(src(ifo))
 	if err != nil {
