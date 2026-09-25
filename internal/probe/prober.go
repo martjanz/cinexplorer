@@ -13,14 +13,19 @@ import (
 )
 
 // Prober reads headers natively and falls back to ffprobe when the native
-// reader cannot parse the file or there is no reader for its extension.
+// reader cannot parse the file or there is no native reader for its content.
 type Prober struct {
 	FFprobe string        // path to ffprobe; "" disables the fallback
 	Timeout time.Duration // per ffprobe run; 0 means 30 s
 }
 
 var defaultProber = sync.OnceValue(func() Prober {
-	path, _ := exec.LookPath("ffprobe")
+	// An error (including exec.ErrDot: found only relative to the current
+	// directory, which exec refuses to run) means no fallback.
+	path, err := exec.LookPath("ffprobe")
+	if err != nil {
+		path = ""
+	}
 	return Prober{FFprobe: path}
 })
 

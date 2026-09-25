@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	pt "cinexplorer/internal/probe/probetest"
 )
@@ -34,6 +35,9 @@ func TestMain(m *testing.M) {
 	case "fail":
 		os.Stderr.WriteString("Invalid data found when processing input\n")
 		os.Exit(1)
+	case "hang":
+		time.Sleep(time.Minute)
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -47,6 +51,10 @@ func TestParseFFprobe(t *testing.T) {
 		Audio: []Track{{Codec: "cook", Lang: "es", Channels: 2}}, Prober: "ffprobe"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got  %+v\nwant %+v", got, want)
+	}
+	mkv, err := parseFFprobe([]byte(`{"streams": [{"codec_type": "video", "codec_name": "h264"}], "format": {"format_name": "matroska,webm"}}`))
+	if err != nil || mkv.Container != "matroska" {
+		t.Fatalf("container %q, %v", mkv.Container, err)
 	}
 	if _, err := parseFFprobe([]byte(`{"streams": [], "format": {}}`)); err == nil {
 		t.Fatal("no streams must be an error")
@@ -130,5 +138,28 @@ func TestProbeMissingFFprobeIsRetryable(t *testing.T) {
 	p := Prober{FFprobe: filepath.Join(t.TempDir(), "no-ffprobe.exe")}
 	if _, err := p.Probe(context.Background(), write(t, "movie.rmvb", []byte(".RMF"))); !errors.Is(err, ErrIO) {
 		t.Fatalf("err = %v, want ErrIO", err)
+	}
+}
+
+func TestProbeFFprobeTimeout(t *testing.T) {
+	t.Setenv(fakeFFprobeEnv, "hang")
+	p := Prober{FFprobe: os.Args[0], Timeout: 300 * time.Millisecond}
+	file := write(t, "movie.rmvb", []byte(".RMF"))
+
+	// A hung ffprobe is a format problem of this file: stored, not retried.
+	start := time.Now()
+	_, err := p.Probe(context.Background(), file)
+	if !errors.Is(err, ErrUnsupported) || errors.Is(err, ErrIO) {
+		t.Fatalf("timeout: err = %v, want ErrUnsupported", err)
+	}
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatalf("ffprobe was not killed: took %v", d)
+	}
+
+	// A cancelled scan is not a property of the file.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.Probe(ctx, file); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled: err = %v, want context.Canceled", err)
 	}
 }

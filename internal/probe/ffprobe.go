@@ -40,6 +40,20 @@ func (p Prober) ffprobe(ctx context.Context, path string) (Info, error) {
 	return parseFFprobe(out)
 }
 
+// ffContainer turns ffprobe's format_name ("matroska,webm",
+// "mov,mp4,m4a,3gp,3g2,mj2", "avi") into the names the native readers use,
+// so a file read either way gets the same container.
+func ffContainer(name string) string {
+	switch {
+	case strings.HasPrefix(name, "matroska"):
+		return "matroska"
+	case strings.HasPrefix(name, "mov,mp4"):
+		return "mp4"
+	}
+	first, _, _ := strings.Cut(name, ",")
+	return first
+}
+
 type ffprobeOutput struct {
 	Streams []struct {
 		CodecType   string            `json:"codec_type"`
@@ -61,7 +75,7 @@ func parseFFprobe(out []byte) (Info, error) {
 	if err := json.Unmarshal(out, &o); err != nil {
 		return Info{}, fmt.Errorf("ffprobe output: %w", err)
 	}
-	info := Info{Container: o.Format.FormatName, Prober: "ffprobe"}
+	info := Info{Container: ffContainer(o.Format.FormatName), Prober: "ffprobe"}
 	if d, err := strconv.ParseFloat(o.Format.Duration, 64); err == nil {
 		info.DurationMs = saneMs(d * 1000)
 	}
