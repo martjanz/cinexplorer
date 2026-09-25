@@ -90,6 +90,27 @@ func TestReplaceVersionsAndRead(t *testing.T) {
 	}
 }
 
+func TestReplaceVersionsRejectsUnknownMemberPath(t *testing.T) {
+	s := open(t)
+	s.SyncFiles([]FileRow{
+		{Path: "../cine/x/1900 - Part 1.mkv", Size: 10, MTime: 1, Fingerprint: "p1", Kind: "video"},
+	}, roots)
+	err := s.ReplaceVersions([]grouping.Version{{
+		Dir:    "../cine/x",
+		Parsed: nameparse.Parsed{Title: "1900", Year: 1976},
+		Size:   10,
+		Parts:  1,
+		Members: []grouping.Member{
+			{Path: "../cine/x/1900 - Part 1.mkv", Role: grouping.RoleMain, Part: 1},
+			// Never passed to SyncFiles: simulates grouping/scan drift.
+			{Path: "../cine/x/1900 - Part 2.mkv", Role: grouping.RoleMain, Part: 2},
+		},
+	}})
+	if err == nil {
+		t.Fatal("expected error for version member referencing unknown file")
+	}
+}
+
 func TestDuplicatesAndHasFile(t *testing.T) {
 	s := open(t)
 	s.SyncFiles([]FileRow{

@@ -4,6 +4,7 @@ package store
 import (
 	"database/sql"
 	_ "embed"
+	"fmt"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -208,8 +209,16 @@ func (s *Store) ReplaceVersions(vs []grouping.Version) error {
 			return err
 		}
 		for _, m := range v.Members {
-			if _, err := updF.Exec(id, string(m.Role), m.Part, m.Lang, m.Path); err != nil {
+			res, err := updF.Exec(id, string(m.Role), m.Part, m.Lang, m.Path)
+			if err != nil {
 				return err
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return fmt.Errorf("store: version member references unknown file %q", m.Path)
 			}
 		}
 	}
