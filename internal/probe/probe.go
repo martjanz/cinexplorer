@@ -58,7 +58,7 @@ func newSource(r io.ReaderAt, size int64) *source {
 // read returns exactly n bytes at off. Reading past the end of the file is a
 // format error (a truncated or lying header); any other failure is ErrIO.
 func (s *source) read(off int64, n int) ([]byte, error) {
-	if off < 0 || n < 0 || off+int64(n) > s.size {
+	if off < 0 || n < 0 || off > s.size-int64(n) {
 		return nil, invalid("read of %d bytes at %d past end of file (%d)", n, off, s.size)
 	}
 	if int64(n) > s.budget {
