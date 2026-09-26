@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cinexplorer/internal/appdir"
+	"cinexplorer/internal/catalog"
 	"cinexplorer/internal/grouping"
 	"cinexplorer/internal/nameparse"
 	"cinexplorer/internal/scan"
@@ -116,21 +117,16 @@ func TestServesIndex(t *testing.T) {
 
 func TestDuplicatesEndpoint(t *testing.T) {
 	s, _ := newServer(t)
-	if err := s.Store.SyncFiles([]store.FileRow{
-		{Path: "../cine/a.mkv", Size: 100, MTime: 1, Fingerprint: "same", Kind: "video"},
-		{Path: "../cine-ordenar/a-copy.mkv", Size: 100, MTime: 1, Fingerprint: "same", Kind: "video"},
-	}, []string{"../cine", "../cine-ordenar"}); err != nil {
-		t.Fatal(err)
-	}
+	addCopy(t, s)
 	rec := request(s.Handler(), "GET", "/api/duplicates", "", "", "127.0.0.1")
 	if rec.Code != 200 {
 		t.Fatalf("status %d", rec.Code)
 	}
-	var d []store.Duplicate
+	var d catalog.DupReport
 	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
 		t.Fatalf("got %s (%v)", rec.Body, err)
 	}
-	if len(d) != 1 || d[0].Size != 100 || len(d[0].Paths) != 2 {
+	if d.Recoverable != 10 || len(d.Groups) != 1 || d.Groups[0].Key != "f1" || len(d.Groups[0].Versions) != 2 {
 		t.Fatalf("got %+v", d)
 	}
 }

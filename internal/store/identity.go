@@ -295,44 +295,6 @@ func (s *Store) ResetIdentification(fingerprint string) error {
 	return err
 }
 
-// UnidentifiedView is a version the matcher could not decide on.
-type UnidentifiedView struct {
-	VersionView
-	Candidates []Candidate `json:"candidates"`
-}
-
-// Unidentified returns the unmatched versions with their candidates, one per
-// fingerprint.
-func (s *Store) Unidentified() ([]UnidentifiedView, error) {
-	var vs []VersionView
-	var ids map[string]*Identification
-	err := s.read(func(tx querier) (err error) {
-		if vs, err = s.versions(tx); err != nil {
-			return err
-		}
-		ids, err = s.identifications(tx)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := []UnidentifiedView{}
-	seen := map[string]bool{}
-	for _, v := range vs {
-		i := ids[v.Fingerprint]
-		if i == nil || i.Status != StatusUnmatched || seen[v.Fingerprint] {
-			continue
-		}
-		seen[v.Fingerprint] = true
-		cands := i.Candidates
-		if cands == nil {
-			cands = []Candidate{}
-		}
-		out = append(out, UnidentifiedView{VersionView: v, Candidates: cands})
-	}
-	return out, nil
-}
-
 // attachIdentity fills Fingerprint, Identification and Movie of each version.
 func (s *Store) attachIdentity(tx querier, out []VersionView, pos map[int64]int) error {
 	reps, err := s.representatives(tx)

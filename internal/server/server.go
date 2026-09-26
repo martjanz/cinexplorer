@@ -25,6 +25,7 @@ var webFS embed.FS
 
 type Server struct {
 	AppDir   string
+	Roots    []string // catalog-form paths, as in config.json
 	Store    *store.Store
 	Scanner  *scan.Scanner // nil in read-only mode
 	ReadOnly bool
@@ -46,6 +47,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /", http.FileServerFS(static))
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/versions", s.versions)
+	mux.HandleFunc("GET /api/versions/{key}", s.version)
+	mux.HandleFunc("GET /api/explore", s.explore)
+	mux.HandleFunc("GET /api/movies", s.movies)
+	mux.HandleFunc("GET /api/movies/{id}", s.movie)
 	mux.HandleFunc("GET /api/duplicates", s.duplicates)
 	mux.HandleFunc("POST /api/scan", jsonOnly(s.rescan))
 	mux.HandleFunc("POST /api/open", jsonOnly(func(w http.ResponseWriter, r *http.Request) { s.withFile(w, r, s.Opener) }))
@@ -116,15 +121,6 @@ func (s *Server) versions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, vs)
-}
-
-func (s *Server) duplicates(w http.ResponseWriter, r *http.Request) {
-	d, err := s.Store.Duplicates()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, d)
 }
 
 func (s *Server) rescan(w http.ResponseWriter, r *http.Request) {

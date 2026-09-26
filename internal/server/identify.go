@@ -17,15 +17,6 @@ import (
 
 var imdbIDRe = regexp.MustCompile(`^tt\d{7,8}$`)
 
-func (s *Server) unidentified(w http.ResponseWriter, r *http.Request) {
-	u, err := s.Store.Unidentified()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, u)
-}
-
 // search is the manual TMDB search: by title (and optional year), or by
 // IMDb id when q is one.
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {

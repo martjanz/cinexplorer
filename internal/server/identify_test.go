@@ -106,12 +106,15 @@ func TestUnidentifiedEndpoint(t *testing.T) {
 	s.Store.SaveIdentifications([]store.Identification{{Fingerprint: "f1", Status: store.StatusUnmatched,
 		Candidates: []store.Candidate{{TMDBID: 7857, Title: "Amarcord", Score: 0.7}}}})
 	rec := request(s.Handler(), "GET", "/api/unidentified", "", "", "127.0.0.1")
-	var u []map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil || len(u) != 1 || u[0]["dir"] != "../cine" {
+	var u struct {
+		Pending int              `json:"pending"`
+		Items   []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil || u.Pending != 0 || len(u.Items) != 1 || u.Items[0]["dir"] != "../cine" {
 		t.Fatalf("body %s", rec.Body)
 	}
-	if c, ok := u[0]["candidates"].([]any); !ok || len(c) != 1 {
-		t.Fatalf("candidates %v", u[0]["candidates"])
+	if c, ok := u.Items[0]["candidates"].([]any); !ok || len(c) != 1 {
+		t.Fatalf("candidates %v", u.Items[0]["candidates"])
 	}
 }
 

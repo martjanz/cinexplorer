@@ -36,11 +36,6 @@ func TestVersionsIdentityAndBestByMovie(t *testing.T) {
 	if d.Movie != nil || d.Identification.Status != StatusUnmatched {
 		t.Fatalf("d %+v", d.Identification)
 	}
-
-	un, err := s.Unidentified()
-	if err != nil || len(un) != 1 || un[0].Dir != "../cine/d" || len(un[0].Candidates) != 1 || un[0].Candidates[0].TMDBID != 1398 {
-		t.Fatalf("unidentified %+v %v", un, err)
-	}
 }
 
 func TestOlderReadOnlyCatalogHasNoIdentity(t *testing.T) {
@@ -59,9 +54,6 @@ func TestOlderReadOnlyCatalogHasNoIdentity(t *testing.T) {
 	defer ro.Close()
 	if _, err := ro.Versions(); err != nil {
 		t.Fatal(err)
-	}
-	if un, err := ro.Unidentified(); err != nil || len(un) != 0 {
-		t.Fatalf("unidentified %v %v", un, err)
 	}
 	if ts, err := ro.IdentifyTargets(); err != nil || ts != nil {
 		t.Fatalf("targets %v %v", ts, err)

@@ -61,7 +61,7 @@ func run(dirOverride string, port int, browser bool) error {
 	}
 	defer st.Close()
 
-	srv := &server.Server{AppDir: appDir, Store: st, ReadOnly: readOnly, Opener: platform.Open, Revealer: platform.Reveal,
+	srv := &server.Server{AppDir: appDir, Roots: cfg.Roots, Store: st, ReadOnly: readOnly, Opener: platform.Open, Revealer: platform.Reveal,
 		Language: cfg.Language, Images: &images.Cache{Dir: filepath.Join(appDir, "cache"), ReadOnly: readOnly}}
 	var api *tmdb.Client
 	if cfg.TMDBToken != "" {
