@@ -22,11 +22,29 @@ AVI e IFO de DVD) para conocer resolución, codecs, duración y pistas de audio 
 subtítulos. Si `ffprobe` está instalado y en el PATH, se usa para los formatos
 que no lee por su cuenta (RMVB, MPG, WMV…); no es obligatorio.
 
+Para identificar las películas se usa TMDB (y Wikidata para completar datos).
+Pegá tu token de lectura de TMDB (API Read Access Token, v4) en `config.json`:
+
+```json
+{
+  "roots": ["../cine", "../cine-ordenar"],
+  "tmdbToken": "eyJ…",
+  "language": "es-ES",
+  "imagePrefetch": "none"
+}
+```
+
+Sin red, la identificación se reintenta sola. Las que no se pueden decidir
+aparecen en la pestaña "Sin identificar" con candidatos para confirmar.
+`imagePrefetch` baja imágenes por adelantado: `"posters"` (afiches), `"all"`
+(afiches y escenas) o `"none"` (solo las que se van mirando).
+
 ## Desarrollo
 
 ```bash
 go test ./...
 CINEXPLORER_PROBE_CORPUS=D:/cine go test ./internal/probe -run Corpus -v -timeout 0
+CINEXPLORER_TMDB_RECORD=1 go test ./internal/identify -run Corpus -v
 go run ./cmd/cinexplorer -dir .run
 bash scripts/build.sh
 ```
