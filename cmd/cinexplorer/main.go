@@ -39,29 +39,53 @@ func main() {
 }
 
 func run(dirOverride string, port int, browser bool) error {
-	appDir, err := appdir.Resolve(dirOverride)
+	srv, closeStore, err := setup(dirOverride)
 	if err != nil {
 		return err
+	}
+	defer closeStore()
+
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return err
+	}
+	url := "http://" + ln.Addr().String() + "/"
+	log.Printf("Cinexplorer en %s (Ctrl+C para salir)", url)
+	if browser {
+		if err := platform.Open(url); err != nil {
+			log.Printf("no se pudo abrir el navegador: %v", err)
+		}
+	}
+	return http.Serve(ln, srv.Handler())
+}
+
+// setup opens the catalog in the app directory and wires the server: TMDB
+// when there is a token, and, when the directory is writable, the scanner
+// (started right away) and the identification runner. closeStore closes the
+// catalog.
+func setup(dirOverride string) (srv *server.Server, closeStore func() error, err error) {
+	appDir, err := appdir.Resolve(dirOverride)
+	if err != nil {
+		return nil, nil, err
 	}
 	readOnly := !appdir.Writable(appDir)
 	cfg, created, err := config.Load(appDir)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if created && !readOnly {
 		if err := config.Save(appDir, cfg); err != nil {
-			return err
+			return nil, nil, err
 		}
 		log.Printf("config.json creado con raíces %v", cfg.Roots)
 	}
 
 	st, err := openStore(appDir, readOnly)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	defer st.Close()
 
-	srv := &server.Server{AppDir: appDir, Roots: cfg.Roots, Store: st, ReadOnly: readOnly, Opener: platform.Open, Revealer: platform.Reveal,
+	srv = &server.Server{AppDir: appDir, Roots: cfg.Roots, Store: st, ReadOnly: readOnly, Opener: platform.Open, Revealer: platform.Reveal,
 		Language: cfg.Language, Images: &images.Cache{Dir: filepath.Join(appDir, "cache"), ReadOnly: readOnly}}
 	var api *tmdb.Client
 	if cfg.TMDBToken != "" {
@@ -86,19 +110,7 @@ func run(dirOverride string, port int, browser bool) error {
 			}
 		}()
 	}
-
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return err
-	}
-	url := "http://" + ln.Addr().String() + "/"
-	log.Printf("Cinexplorer en %s (Ctrl+C para salir)", url)
-	if browser {
-		if err := platform.Open(url); err != nil {
-			log.Printf("no se pudo abrir el navegador: %v", err)
-		}
-	}
-	return http.Serve(ln, srv.Handler())
+	return srv, st.Close, nil
 }
 
 // openStore opens the catalog. In read-only mode with no catalog file yet it
