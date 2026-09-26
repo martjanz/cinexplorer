@@ -5,7 +5,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 type fakeFetcher struct {
@@ -77,5 +80,47 @@ func TestGetReadOnlyDoesNotStore(t *testing.T) {
 	}
 	if c.Has(Poster, 1) {
 		t.Fatal("read-only cache stored the image")
+	}
+}
+
+func TestGetConcurrentDownloads(t *testing.T) {
+	c := &Cache{Dir: t.TempDir(), Fetch: &slowFetcher{}}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if b, err := c.Get(context.Background(), Poster, 1, "/p.jpg"); err != nil || string(b) != strings.Repeat("x", 1<<16) {
+				t.Errorf("got %d bytes, %v", len(b), err)
+			}
+		}()
+	}
+	wg.Wait()
+	entries, _ := os.ReadDir(filepath.Join(c.Dir, "posters"))
+	if len(entries) != 1 || entries[0].Name() != "1.jpg" {
+		t.Fatalf("cache dir: %v", entries)
+	}
+	if b, _ := os.ReadFile(filepath.Join(c.Dir, "posters", "1.jpg")); len(b) != 1<<16 {
+		t.Fatalf("cached %d bytes", len(b))
+	}
+}
+
+// slowFetcher returns a 64 KiB image after a pause, so downloads overlap.
+type slowFetcher struct{}
+
+func (slowFetcher) Image(ctx context.Context, path, size string) ([]byte, error) {
+	time.Sleep(20 * time.Millisecond)
+	return []byte(strings.Repeat("x", 1<<16)), nil
+}
+
+func TestGetUnwritableCacheStillServes(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "cache")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil { // a file where the directory should go
+		t.Fatal(err)
+	}
+	c := &Cache{Dir: blocker, Fetch: &fakeFetcher{}}
+	if b, err := c.Get(context.Background(), Poster, 1, "/p.jpg"); err != nil || len(b) == 0 {
+		t.Fatalf("got %q, %v", b, err)
 	}
 }

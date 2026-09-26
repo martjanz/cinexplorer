@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -57,8 +58,8 @@ func (c *Cache) Has(kind Kind, id int) bool {
 }
 
 // Get returns the image of movie id, downloading tmdbPath when it is not
-// cached yet. The download is written to a temporary file and renamed, so a
-// cut never leaves a truncated image behind.
+// cached yet. Storing the download is best effort: the image is returned even
+// when it cannot be written to the cache.
 func (c *Cache) Get(ctx context.Context, kind Kind, id int, tmdbPath string) ([]byte, error) {
 	if !ValidKind(kind) {
 		return nil, fmt.Errorf("images: kind %q", kind)
@@ -78,19 +79,34 @@ func (c *Cache) Get(ctx context.Context, kind Kind, id int, tmdbPath string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	if c.ReadOnly {
-		return b, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		return b, err
-	}
-	tmp := name + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return b, err
-	}
-	if err := os.Rename(tmp, name); err != nil {
-		os.Remove(tmp)
-		return b, err
+	if !c.ReadOnly {
+		if err := store(name, b); err != nil {
+			log.Printf("no se pudo guardar %s: %v", name, err)
+		}
 	}
 	return b, nil
+}
+
+// store writes b to name through a temporary file of its own, renamed at the
+// end: a cut never leaves a truncated image, and concurrent downloads of the
+// same image (a page request and the prefetch) never share a file.
+func store(name string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(name), filepath.Base(name)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), name)
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+	}
+	return err
 }
