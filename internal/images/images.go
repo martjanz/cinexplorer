@@ -124,7 +124,9 @@ func (c *Cache) get(ctx context.Context, kind Kind, id int, tmdbPath string, kee
 // removeOthers deletes the images cached for movie id other than keep: the
 // ones of earlier paths and the "<id>.jpg" of catalogs from before images
 // were named after their path. Temporary files of downloads in progress are
-// left alone.
+// left alone. If a movie's path changes while an old one is still downloading,
+// the late download may remove the current image; the next request fetches it
+// again, which beats a cache that tracks which path is current.
 func removeOthers(keep string, id int) {
 	dir := filepath.Dir(keep)
 	entries, err := os.ReadDir(dir)
