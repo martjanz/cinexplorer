@@ -10,6 +10,8 @@
 
 Spec: `docs/superpowers/specs/2026-09-26-cinexplorer-m3-identificacion-design.md` (detalle de esta etapa) y `docs/superpowers/specs/2026-09-25-cinexplorer-design.md` §3.1, §4 pasos 5–6, §4.2.
 
+**Estado:** ejecutado. Este documento se regeneró al final desde el código definitivo, incluidas las correcciones de las revisiones (respuestas HTTP demasiado grandes, idioma validado en SPARQL, archivos temporales propios por descarga de imagen, vistas previas de candidatos que no llenan la caché, `.nfo` solo para su versión en carpetas compartidas, rechazo de pedidos de otros sitios, validación de la huella antes de consultar TMDB); el historial de commits de la rama muestra el orden en que se aplicaron.
+
 **Nota sobre el código de este plan:** todo el código se prototipó y se probó antes de escribir el plan: suite completa en verde, compilación cruzada, corpus de 30 nombres reales contra TMDB y una corrida real sobre `D:\cine\1970s` con token (33 automáticas de 41, todas correctas). El fixture grande del corpus (`internal/identify/testdata/tmdb_corpus.json`, respuestas reales de TMDB recortadas) ya está commiteado en la rama junto con este plan. Copiá el código tal cual; si algo no compila o un test no da lo esperado, es un error del plan: reportalo en lugar de improvisar.
 
 ---
@@ -332,7 +334,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Create: `internal/httpx/httpx.go`
 - Test: `internal/httpx/httpx_test.go`
 
-Plomería compartida por TMDB y Wikidata: `Limiter` (token bucket) y `Client.Get` (reintentos con backoff exponencial y jitter ante 429/5xx/red, respeta `Retry-After`, `*StatusError` para los demás códigos, `ErrOffline` al agotar intentos).
+Plomería compartida por TMDB y Wikidata: `Limiter` (token bucket) y `Client.Get` (reintentos con backoff exponencial y jitter ante 429/5xx/red, respeta `Retry-After`, `*StatusError` para los demás códigos, `ErrOffline` al agotar intentos, `ErrTooLarge` —sin reintentos— si la respuesta supera 32 MiB).
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
@@ -464,6 +466,18 @@ func TestLimiter(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+func TestGetRejectsOversizedBody(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Write(make([]byte, maxBody+1))
+	}))
+	defer srv.Close()
+	if _, err := fastClient().Get(context.Background(), srv.URL); !errors.Is(err, ErrTooLarge) || calls.Load() != 1 {
+		t.Fatalf("err %v calls %d", err, calls.Load())
+	}
+}
 ```
 
 - [ ] **Step 2: Verificar que fallan**
@@ -495,6 +509,9 @@ import (
 // ErrOffline means the service could not be reached (network down, DNS,
 // timeouts, or repeated 429/5xx): the work should be retried later.
 var ErrOffline = errors.New("sin conexión")
+
+// ErrTooLarge means a response exceeded the size limit; it is not retried.
+var ErrTooLarge = errors.New("respuesta demasiado grande")
 
 // StatusError is a final (non-retried) HTTP error status.
 type StatusError struct {
@@ -600,7 +617,7 @@ func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
 			return nil, ctx.Err()
 		}
 		var se *StatusError
-		if errors.As(err, &se) {
+		if errors.As(err, &se) || errors.Is(err, ErrTooLarge) {
 			return nil, err
 		}
 		last = err
@@ -629,13 +646,16 @@ func (c *Client) once(ctx context.Context, hc *http.Client, url string) ([]byte,
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 		secs, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
 		return nil, &retryAfter{code: resp.StatusCode, d: time.Duration(secs) * time.Second}
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		return nil, &StatusError{Code: resp.StatusCode, URL: url}
+	}
+	if len(body) > maxBody {
+		return nil, fmt.Errorf("%w: %s", ErrTooLarge, url)
 	}
 	return body, err
 }
@@ -1007,7 +1027,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Create: `internal/wikidata/testdata/lookup.json`
 - Test: `internal/wikidata/wikidata_test.go`
 
-Consulta SPARQL por lotes de hasta 50 ids de TMDB (P4947) que devuelve QID, IMDb, países ISO, directores (etiqueta en el idioma, fallback inglés) y año más temprano. `lookup.json` es una respuesta real de `query.wikidata.org` (Amarcord 7857, Fight Club 550 y un id inexistente), reducida a los campos `value`.
+Consulta SPARQL por lotes de hasta 50 ids de TMDB (P4947) que devuelve QID, IMDb, países ISO, directores (etiqueta en el idioma, fallback inglés) y año más temprano. El idioma entra en el texto de la consulta, así que solo se aceptan códigos `[a-z]{2,3}` (si no, `en`). `lookup.json` es una respuesta real de `query.wikidata.org` (Amarcord 7857, Fight Club 550 y un id inexistente), reducida a los campos `value`.
 
 - [ ] **Step 1: Escribir el fixture y los tests que fallan**
 
@@ -1092,6 +1112,26 @@ func TestParseSkipsUnlabelledDirectors(t *testing.T) {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 }
+
+func TestLookupSanitizesLanguage(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query().Get("query")
+		w.Write([]byte(`{"results":{"bindings":[]}}`))
+	}))
+	defer srv.Close()
+	c := New("test")
+	c.Endpoint = srv.URL
+	c.HTTP.Limiter = nil
+	for lang, want := range map[string]string{"pt-BR": `"pt,en"`, `x" } #`: `"en,en"`, "": `"en,en"`} {
+		if _, err := c.Lookup(context.Background(), []int{1}, lang); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, `wikibase:language `+want) {
+			t.Errorf("lang %q: query %s", lang, got)
+		}
+	}
+}
 ```
 
 - [ ] **Step 2: Verificar que fallan**
@@ -1114,6 +1154,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1168,8 +1209,8 @@ func (c *Client) Lookup(ctx context.Context, ids []int, lang string) (map[int]En
 		values[i] = strconv.Quote(strconv.Itoa(id))
 	}
 	labelLang := strings.ToLower(strings.SplitN(lang, "-", 2)[0])
-	if labelLang == "" {
-		labelLang = "en"
+	if !langRe.MatchString(labelLang) {
+		labelLang = "en" // it goes into the query text: only plain codes
 	}
 	q := `SELECT ?tmdb ?item ?imdb ?countryIso ?directorLabel ?date WHERE {
   VALUES ?tmdb { ` + strings.Join(values, " ") + ` }
@@ -1186,6 +1227,9 @@ func (c *Client) Lookup(ctx context.Context, ids []int, lang string) (map[int]En
 	}
 	return parse(body)
 }
+
+// langRe is an ISO 639 language code, the only shape allowed in the query.
+var langRe = regexp.MustCompile(`^[a-z]{2,3}$`)
 
 type binding map[string]struct {
 	Value string `json:"value"`
@@ -1282,7 +1326,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Create: `internal/images/images.go`
 - Test: `internal/images/images_test.go`
 
-Afiches (w342) y escenas (w1280) en `cache/posters/<id>.jpg` y `cache/backdrops/<id>.jpg`, descargados una vez (escritura a `.tmp` + rename). Sin fetcher, sin red o con una ruta de TMDB inválida → `ErrUnavailable`. En modo consulta sirve sin guardar.
+Afiches (w342) y escenas (w1280) en `cache/posters/<id>.jpg` y `cache/backdrops/<id>.jpg`, descargados una vez, cada descarga con su propio temporal (`os.CreateTemp` + rename) para que dos pedidos simultáneos no se pisen; guardar es best effort. Sin fetcher, sin red o con una ruta de TMDB inválida → `ErrUnavailable`. `Preview` sirve sin guardar (para rutas que vienen del navegador); en modo consulta tampoco se guarda.
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
@@ -1296,7 +1340,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 type fakeFetcher struct {
@@ -1370,6 +1417,65 @@ func TestGetReadOnlyDoesNotStore(t *testing.T) {
 		t.Fatal("read-only cache stored the image")
 	}
 }
+
+func TestGetConcurrentDownloads(t *testing.T) {
+	c := &Cache{Dir: t.TempDir(), Fetch: &slowFetcher{}}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if b, err := c.Get(context.Background(), Poster, 1, "/p.jpg"); err != nil || string(b) != strings.Repeat("x", 1<<16) {
+				t.Errorf("got %d bytes, %v", len(b), err)
+			}
+		}()
+	}
+	wg.Wait()
+	entries, _ := os.ReadDir(filepath.Join(c.Dir, "posters"))
+	if len(entries) != 1 || entries[0].Name() != "1.jpg" {
+		t.Fatalf("cache dir: %v", entries)
+	}
+	if b, _ := os.ReadFile(filepath.Join(c.Dir, "posters", "1.jpg")); len(b) != 1<<16 {
+		t.Fatalf("cached %d bytes", len(b))
+	}
+}
+
+// slowFetcher returns a 64 KiB image after a pause, so downloads overlap.
+type slowFetcher struct{}
+
+func (slowFetcher) Image(ctx context.Context, path, size string) ([]byte, error) {
+	time.Sleep(20 * time.Millisecond)
+	return []byte(strings.Repeat("x", 1<<16)), nil
+}
+
+func TestGetUnwritableCacheStillServes(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "cache")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil { // a file where the directory should go
+		t.Fatal(err)
+	}
+	c := &Cache{Dir: blocker, Fetch: &fakeFetcher{}}
+	if b, err := c.Get(context.Background(), Poster, 1, "/p.jpg"); err != nil || len(b) == 0 {
+		t.Fatalf("got %q, %v", b, err)
+	}
+}
+
+func TestPreviewDoesNotStore(t *testing.T) {
+	f := &fakeFetcher{}
+	c := &Cache{Dir: t.TempDir(), Fetch: f}
+	ctx := context.Background()
+	if b, err := c.Preview(ctx, Poster, 1, "/candidate.jpg"); err != nil || string(b) != "img:w342/candidate.jpg" {
+		t.Fatalf("got %q, %v", b, err)
+	}
+	if c.Has(Poster, 1) {
+		t.Fatal("preview stored the image")
+	}
+	// Once the real image is cached, previews serve it too.
+	c.Get(ctx, Poster, 1, "/real.jpg")
+	if b, _ := c.Preview(ctx, Poster, 1, "/candidate.jpg"); string(b) != "img:w342/real.jpg" {
+		t.Fatalf("preview after caching %q", b)
+	}
+}
 ```
 
 - [ ] **Step 2: Verificar que fallan**
@@ -1391,6 +1497,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1441,9 +1548,20 @@ func (c *Cache) Has(kind Kind, id int) bool {
 }
 
 // Get returns the image of movie id, downloading tmdbPath when it is not
-// cached yet. The download is written to a temporary file and renamed, so a
-// cut never leaves a truncated image behind.
+// cached yet. Storing the download is best effort: the image is returned even
+// when it cannot be written to the cache.
 func (c *Cache) Get(ctx context.Context, kind Kind, id int, tmdbPath string) ([]byte, error) {
+	return c.get(ctx, kind, id, tmdbPath, !c.ReadOnly)
+}
+
+// Preview is Get without storing the download. It serves candidates whose
+// TMDB path comes from the browser: such a path must never decide what the
+// cache holds for a movie id.
+func (c *Cache) Preview(ctx context.Context, kind Kind, id int, tmdbPath string) ([]byte, error) {
+	return c.get(ctx, kind, id, tmdbPath, false)
+}
+
+func (c *Cache) get(ctx context.Context, kind Kind, id int, tmdbPath string, keep bool) ([]byte, error) {
 	if !ValidKind(kind) {
 		return nil, fmt.Errorf("images: kind %q", kind)
 	}
@@ -1462,21 +1580,36 @@ func (c *Cache) Get(ctx context.Context, kind Kind, id int, tmdbPath string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	if c.ReadOnly {
-		return b, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		return b, err
-	}
-	tmp := name + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return b, err
-	}
-	if err := os.Rename(tmp, name); err != nil {
-		os.Remove(tmp)
-		return b, err
+	if keep {
+		if err := store(name, b); err != nil {
+			log.Printf("no se pudo guardar %s: %v", name, err)
+		}
 	}
 	return b, nil
+}
+
+// store writes b to name through a temporary file of its own, renamed at the
+// end: a cut never leaves a truncated image, and concurrent downloads of the
+// same image (a page request and the prefetch) never share a file.
+func store(name string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(name), filepath.Base(name)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), name)
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+	}
+	return err
 }
 ```
 
@@ -1507,7 +1640,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `internal/store/identity_test.go`
 - Test: `internal/store/versions_identity_test.go`
 
-Tablas `movies` e `identifications` (spec §4). La clave es la huella del **representativo** de cada versión: el principal presente con huella de menor parte y, a igualdad, el más grande (el VOB más grande de un DVD). `SaveIdentifications` nunca pisa una corrección (`ON CONFLICT … WHERE status IN ('auto','unmatched')`). `Versions()` suma `fingerprint`, `identification` y `movie`, y `markBest` agrupa por id de TMDB cuando hay película. Un catálogo anterior abierto en modo consulta (sin las tablas) funciona con identidad vacía (`hasIdentity`).
+Tablas `movies` e `identifications` (spec §4). La clave es la huella del **representativo** de cada versión: el principal presente con huella de menor parte y, a igualdad, el más grande (el VOB más grande de un DVD). `SaveIdentifications` nunca pisa una corrección (`ON CONFLICT … WHERE status IN ('auto','unmatched')`). `Versions()` suma `fingerprint`, `identification` y `movie`, y `markBest` agrupa por id de TMDB cuando hay película. Un catálogo anterior abierto en modo consulta (sin las tablas) funciona con identidad vacía (`hasIdentity`). En una carpeta con varias versiones, un `.nfo` solo cuenta para la versión cuyo archivo empieza con su nombre. Las correcciones solo se aceptan para huellas de representativos (`IsRepresentative`), y el enriquecimiento solo sigue identificaciones de archivos presentes.
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
@@ -1614,6 +1747,13 @@ func TestSetCorrectionValidates(t *testing.T) {
 	if err := s.SetCorrection("", StatusIgnored, 0); !errors.Is(err, ErrUnknownFingerprint) {
 		t.Errorf("empty fingerprint: %v", err)
 	}
+	// a2 is the second part of a version: not a version's fingerprint.
+	if err := s.SetCorrection("a2", StatusIgnored, 0); !errors.Is(err, ErrUnknownFingerprint) {
+		t.Errorf("second part: %v", err)
+	}
+	if ok, err := s.IsRepresentative("a1"); !ok || err != nil {
+		t.Errorf("a1: %v %v", ok, err)
+	}
 	if err := s.SetCorrection("a1", StatusAuto, 1); err == nil {
 		t.Error("auto accepted as a correction")
 	}
@@ -1640,7 +1780,10 @@ func TestMoviesRoundTripAndEnrichQueue(t *testing.T) {
 		{Fingerprint: "a1", Status: StatusAuto, TMDBID: 7857},
 		{Fingerprint: "vob2", Status: StatusAuto, TMDBID: 1398},
 	})
-	s.SetCorrection("a2", StatusExtra, 500)
+	s.SaveIdentifications([]Identification{
+		{Fingerprint: "a2", Status: StatusExtra, TMDBID: 500},
+		{Fingerprint: "gone", Status: StatusAuto, TMDBID: 900}, // its file was rewritten
+	})
 	ids, err := s.MoviesToEnrich("es-ES")
 	if err != nil || !reflect.DeepEqual(ids, []int{500, 1398}) {
 		t.Fatalf("to enrich %v %v", ids, err)
@@ -1677,6 +1820,28 @@ func TestInvalidateMovie(t *testing.T) {
 	ts, _ := s.IdentifyTargets()
 	if ts[0].Current != nil || ts[1].Current == nil || ts[1].Current.Status != StatusManual {
 		t.Fatalf("targets %+v %+v", ts[0].Current, ts[1].Current)
+	}
+}
+
+func TestSharedFolderNFOsOnlyForTheirVersion(t *testing.T) {
+	s := open(t)
+	s.SyncFiles([]FileRow{
+		{Path: "../cine/1970s/Amarcord CD1.avi", Size: 700, MTime: 1, Fingerprint: "a", Kind: "video"},
+		{Path: "../cine/1970s/Chinatown.avi", Size: 700, MTime: 1, Fingerprint: "c", Kind: "video"},
+		{Path: "../cine/1970s/Amarcord.nfo", Size: 1, MTime: 1, Kind: "info"},
+		{Path: "../cine/1970s/release.nfo", Size: 1, MTime: 1, Kind: "info"},
+	}, roots)
+	main := func(p string) []grouping.Member { return []grouping.Member{{Path: p, Role: grouping.RoleMain}} }
+	s.ReplaceVersions([]grouping.Version{
+		{Dir: "../cine/1970s", Parsed: nameparse.Parsed{Title: "Amarcord"}, Size: 700, Parts: 1, Members: main("../cine/1970s/Amarcord CD1.avi")},
+		{Dir: "../cine/1970s", Parsed: nameparse.Parsed{Title: "Chinatown"}, Size: 700, Parts: 1, Members: main("../cine/1970s/Chinatown.avi")},
+	})
+	ts, err := s.IdentifyTargets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ts) != 2 || !reflect.DeepEqual(ts[0].NFOs, []string{"../cine/1970s/Amarcord.nfo"}) || ts[1].NFOs != nil {
+		t.Fatalf("targets %+v", ts)
 	}
 }
 ```
@@ -1962,13 +2127,15 @@ func (s *Store) queryMovies(q string, args ...any) ([]Movie, error) {
 	return out, rows.Err()
 }
 
-// MoviesToEnrich returns the TMDB ids that identifications point to and that
-// are missing from movies or were fetched in another language.
+// MoviesToEnrich returns the TMDB ids that identifications of present files
+// point to and that are missing from movies or were fetched in another
+// language. Identifications left behind by rewritten files are not followed.
 func (s *Store) MoviesToEnrich(lang string) ([]int, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT i.tmdb_id FROM identifications i
 		LEFT JOIN movies m ON m.tmdb_id = i.tmdb_id
 		WHERE i.status IN ('auto', 'manual', 'extra') AND i.tmdb_id > 0
 		  AND (m.tmdb_id IS NULL OR m.language != ?)
+		  AND EXISTS (SELECT 1 FROM files f WHERE f.fingerprint = i.fingerprint AND f.missing = 0)
 		ORDER BY i.tmdb_id`, lang)
 	if err != nil {
 		return nil, err
@@ -2016,6 +2183,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path"
+	"strings"
 	"time"
 )
 
@@ -2064,29 +2232,78 @@ type IdentifyTarget struct {
 	Current     *Identification // nil when never identified
 }
 
-// representatives maps each version id to the fingerprint of its
-// representative file: the present main file with the lowest part number,
-// the largest on ties (the biggest VOB of a DVD).
-func (s *Store) representatives(tx querier) (map[int64]string, error) {
-	rows, err := tx.Query(`SELECT version_id, fingerprint FROM files
+// representative is the file that stands for a version.
+type representative struct {
+	fingerprint string
+	path        string
+}
+
+// representatives maps each version id to its representative file: the
+// present main file with the lowest part number, the largest on ties (the
+// biggest VOB of a DVD).
+func (s *Store) representatives(tx querier) (map[int64]representative, error) {
+	rows, err := tx.Query(`SELECT version_id, fingerprint, path FROM files
 		WHERE version_id IS NOT NULL AND role = 'main' AND missing = 0 AND fingerprint != ''
 		ORDER BY version_id, part, size DESC, path`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[int64]string{}
+	out := map[int64]representative{}
 	for rows.Next() {
 		var id int64
-		var fp string
-		if err := rows.Scan(&id, &fp); err != nil {
+		var r representative
+		if err := rows.Scan(&id, &r.fingerprint, &r.path); err != nil {
 			return nil, err
 		}
 		if _, ok := out[id]; !ok {
-			out[id] = fp
+			out[id] = r
 		}
 	}
 	return out, rows.Err()
+}
+
+// IsRepresentative reports whether fingerprint identifies a version: it is
+// the fingerprint of some version's representative file. Corrections are
+// only accepted for such fingerprints (a second part's would never show).
+func (s *Store) IsRepresentative(fingerprint string) (bool, error) {
+	if fingerprint == "" {
+		return false, nil
+	}
+	reps, err := s.representatives(s.db)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range reps {
+		if r.fingerprint == fingerprint {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// nfosFor picks the .nfo files that describe a version. In a folder of its
+// own every .nfo counts; in a folder shared by several versions (loose movies
+// in a root or a decade folder) only a .nfo named like the version's file
+// does ("Amarcord.nfo" for "Amarcord CD1.avi"), or one movie's IMDb id would
+// be forced on all of them.
+func nfosFor(nfos []string, shared bool, repPath string) []string {
+	if !shared {
+		return nfos
+	}
+	rep := strings.ToLower(stem(repPath))
+	var out []string
+	for _, n := range nfos {
+		if s := strings.ToLower(stem(n)); s != "" && strings.HasPrefix(rep, s) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func stem(p string) string {
+	b := path.Base(p)
+	return strings.TrimSuffix(b, path.Ext(b))
 }
 
 type querier interface {
@@ -2160,23 +2377,37 @@ func (s *Store) IdentifyTargets() ([]IdentifyTarget, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []IdentifyTarget
-	seen := map[string]bool{}
+	type version struct {
+		id int64
+		t  IdentifyTarget
+	}
+	var vs []version
+	perDir := map[string]int{}
 	for rows.Next() {
-		var id int64
-		var t IdentifyTarget
-		if err := rows.Scan(&id, &t.Dir, &t.Title, &t.Year, &t.Director, &t.IMDbID); err != nil {
+		var v version
+		if err := rows.Scan(&v.id, &v.t.Dir, &v.t.Title, &v.t.Year, &v.t.Director, &v.t.IMDbID); err != nil {
 			return nil, err
 		}
-		fp, ok := reps[id]
-		if !ok || seen[fp] {
+		vs = append(vs, v)
+		perDir[v.t.Dir]++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var out []IdentifyTarget
+	seen := map[string]bool{}
+	for _, v := range vs {
+		rep, ok := reps[v.id]
+		if !ok || seen[rep.fingerprint] {
 			continue
 		}
-		seen[fp] = true
-		t.Fingerprint, t.NFOs, t.Current = fp, nfos[t.Dir], current[fp]
+		seen[rep.fingerprint] = true
+		t := v.t
+		t.Fingerprint, t.Current = rep.fingerprint, current[rep.fingerprint]
+		t.NFOs = nfosFor(nfos[t.Dir], perDir[t.Dir] > 1, rep.path)
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // SaveIdentifications stores matcher results in one transaction. A row that
@@ -2215,23 +2446,19 @@ func (s *Store) SaveIdentifications(ids []Identification) error {
 	return tx.Commit()
 }
 
-// SetCorrection records the user's decision for a fingerprint: a movie
-// (StatusManual), not a movie (StatusIgnored) or an extra of a movie
+// SetCorrection records the user's decision for a version's fingerprint: a
+// movie (StatusManual), not a movie (StatusIgnored) or an extra of a movie
 // (StatusExtra). Candidates and query of a previous match are kept.
 func (s *Store) SetCorrection(fingerprint, status string, tmdbID int) error {
 	if status != StatusManual && status != StatusIgnored && status != StatusExtra {
 		return errors.New("store: estado de corrección inválido: " + status)
 	}
-	if fingerprint == "" {
-		return ErrUnknownFingerprint
-	}
-	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM files WHERE fingerprint = ? LIMIT 1`, fingerprint).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrUnknownFingerprint
-	}
+	ok, err := s.IsRepresentative(fingerprint)
 	if err != nil {
 		return err
+	}
+	if !ok {
+		return ErrUnknownFingerprint
 	}
 	_, err = s.db.Exec(`INSERT INTO identifications (fingerprint, status, tmdb_id, updated_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT(fingerprint) DO UPDATE SET status = excluded.status, tmdb_id = excluded.tmdb_id,
@@ -2286,9 +2513,9 @@ func (s *Store) attachIdentity(out []VersionView, pos map[int64]int) error {
 	if err != nil {
 		return err
 	}
-	for id, fp := range reps {
+	for id, r := range reps {
 		if i, ok := pos[id]; ok {
-			out[i].Fingerprint = fp
+			out[i].Fingerprint = r.fingerprint
 		}
 	}
 	if !s.hasIdentity {
@@ -3666,7 +3893,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Create: `internal/identify/runner.go`
 - Test: `internal/identify/runner_test.go`
 
-Fases identificar → enriquecer → Wikidata → prefetch de imágenes. Guarda cada 20. Sin red: estado `offline` y reintento programado (5 min, duplicando hasta 1 h; se reinicia tras una corrida sin problemas). Token inválido: `badToken`. `Trigger` corre en segundo plano y encola a lo sumo una corrida más; `Adopt` valida y guarda una película para la identificación manual. La consulta suma la alternativa por carpeta cuando el nombre de la carpeta trae año.
+Fases identificar → enriquecer → Wikidata → prefetch de imágenes. Guarda cada 20. Sin red: estado `offline` y reintento programado (5 min, duplicando hasta 1 h; se reinicia tras una corrida sin problemas). Token inválido: `badToken`. `Trigger` corre en segundo plano y encola a lo sumo una corrida más; `Adopt` valida y guarda una película para la identificación manual (`ErrNoToken` sin token). Sin token, el estado es `noToken` desde el arranque. La consulta suma la alternativa por carpeta cuando el nombre de la carpeta trae año.
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
@@ -3918,8 +4145,14 @@ func TestRunBadTokenAndNoToken(t *testing.T) {
 		t.Fatalf("state %s scheduled %v", r.Status().State, scheduled)
 	}
 	r.TMDB = nil
+	if st := r.Status().State; st != StateNoToken {
+		t.Fatalf("no token before running: %s", st)
+	}
 	if err := r.Run(context.Background()); err != nil || r.Status().State != StateNoToken {
 		t.Fatalf("no token: %v %s", err, r.Status().State)
+	}
+	if err := r.Adopt(context.Background(), 7857); !errors.Is(err, ErrNoToken) {
+		t.Fatalf("adopt without token: %v", err)
 	}
 }
 
@@ -4076,7 +4309,10 @@ const (
 	PrefetchAll     = "all"
 )
 
-var ErrBusy = errors.New("ya hay una identificación en curso")
+var (
+	ErrBusy    = errors.New("ya hay una identificación en curso")
+	ErrNoToken = errors.New("sin token de TMDB")
+)
 
 // Retry delays while offline: the first, doubled up to the last.
 const (
@@ -4124,7 +4360,10 @@ func (r *Runner) Status() Status {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s := r.status
-	if s.State == "" {
+	switch {
+	case r.TMDB == nil:
+		s.State = StateNoToken // known before any run
+	case s.State == "":
 		s.State = StateIdle
 	}
 	return s
@@ -4320,7 +4559,7 @@ func (r *Runner) identifyAll(ctx context.Context, fetched map[int]tmdb.Details) 
 // identification is validated. tmdb.ErrNotFound means the id does not exist.
 func (r *Runner) Adopt(ctx context.Context, id int) error {
 	if r.TMDB == nil {
-		return errors.New("sin token de TMDB")
+		return ErrNoToken
 	}
 	m, err := r.fetchMovie(ctx, id, nil)
 	if err != nil {
@@ -4618,7 +4857,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `internal/server/server.go`
 - Test: `internal/server/identify_test.go`
 
-Endpoints del spec §10. `movie`/`extra` validan el id con `Runner.Adopt` (404 si TMDB no lo conoce, 503 sin red) y relanzan el Runner para Wikidata e imágenes. En modo consulta → 409 como `/api/scan`. `/img/{kind}/{id}.jpg` toma la ruta de `movies` o, para un candidato aún no guardado, de `?p=`. `/api/status` suma `identify`.
+Endpoints del spec §10. `movie`/`extra` validan el id con `Runner.Adopt` (404 si TMDB no lo conoce, 503 sin red) y relanzan el Runner para Wikidata e imágenes. La huella se valida primero (404 sin consultar TMDB, también en `reset`); sin token → 503. En modo consulta → 409 como `/api/scan`. `/img/{kind}/{id}.jpg` toma la ruta de `movies` (y guarda en caché) o, para un candidato aún no guardado, de `?p=` con `Preview` (nunca se guarda: cualquier página podría mandarla). `localOnly` además rechaza pedidos de otros sitios (`Sec-Fetch-Site` cross-site/same-site, salvo navegación) y agrega `Cross-Origin-Resource-Policy: same-origin`. `/api/status` suma `identify`.
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
@@ -4631,6 +4870,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -4667,7 +4907,7 @@ func (f *fakeTMDB) Movie(ctx context.Context, id int, lang string) (tmdb.Details
 
 func (f *fakeTMDB) Image(ctx context.Context, path, size string) ([]byte, error) {
 	f.images = append(f.images, size+path)
-	return []byte("\xff\xd8\xff\xe0 jpeg"), nil
+	return []byte("\xff\xd8\xff\xe0 jpeg " + path), nil
 }
 
 func identifyServer(t *testing.T) (*Server, *fakeTMDB) {
@@ -4705,10 +4945,12 @@ func TestIdentifyErrors(t *testing.T) {
 		body string
 		want int
 	}{
-		{`{"fingerprint":"f1","action":"movie","tmdbId":5}`, http.StatusNotFound}, // unknown to TMDB
-		{`{"fingerprint":"zz","action":"ignore"}`, http.StatusNotFound},           // unknown fingerprint
-		{`{"fingerprint":"f1","action":"movie"}`, http.StatusBadRequest},          // no id
-		{`{"fingerprint":"f1","action":"delete"}`, http.StatusBadRequest},         // unknown action
+		{`{"fingerprint":"f1","action":"movie","tmdbId":5}`, http.StatusNotFound},    // unknown to TMDB
+		{`{"fingerprint":"zz","action":"ignore"}`, http.StatusNotFound},              // unknown fingerprint
+		{`{"fingerprint":"zz","action":"movie","tmdbId":7857}`, http.StatusNotFound}, // checked before TMDB
+		{`{"fingerprint":"zz","action":"reset"}`, http.StatusNotFound},
+		{`{"fingerprint":"f1","action":"movie"}`, http.StatusBadRequest},  // no id
+		{`{"fingerprint":"f1","action":"delete"}`, http.StatusBadRequest}, // unknown action
 		{`{"fingerprint":"f1","action":"ignore"}`, http.StatusNoContent},
 		{`{"fingerprint":"f1","action":"extra","tmdbId":7857}`, http.StatusNoContent},
 		{`{"fingerprint":"f1","action":"reset"}`, http.StatusNoContent},
@@ -4757,15 +4999,23 @@ func TestSearchEndpoint(t *testing.T) {
 func TestImageEndpoint(t *testing.T) {
 	s, f := identifyServer(t)
 	get := func(url string) int { return request(s.Handler(), "GET", url, "", "", "127.0.0.1").Code }
-	// A candidate not stored yet: its path comes in the query.
-	if code := get("/img/poster/7857.jpg?p=/p.jpg"); code != 200 {
-		t.Fatalf("candidate poster %d", code)
+	body := func(url string) string { return request(s.Handler(), "GET", url, "", "", "127.0.0.1").Body.String() }
+	// A candidate not stored yet: its path comes in the query, and it is
+	// shown but not cached, so it cannot decide the movie's cached poster.
+	if b := body("/img/poster/7857.jpg?p=/other.jpg"); !strings.HasSuffix(b, "/other.jpg") {
+		t.Fatalf("candidate poster %q", b)
+	}
+	if s.Images.Has(images.Poster, 7857) {
+		t.Fatal("candidate preview was cached")
 	}
 	s.Identifier.Adopt(context.Background(), 7857)
 	if code := get("/img/backdrop/7857.jpg"); code != 200 {
 		t.Fatalf("backdrop %d", code)
 	}
-	if code := get("/img/poster/7857.jpg"); code != 200 || len(f.images) != 2 {
+	if b := body("/img/poster/7857.jpg"); !strings.HasSuffix(b, "/p.jpg") {
+		t.Fatalf("movie poster %q", b)
+	}
+	if code := get("/img/poster/7857.jpg?p=/other.jpg"); code != 200 || len(f.images) != 3 {
 		t.Fatalf("cached poster %d, downloads %v", code, f.images)
 	}
 	rec := request(s.Handler(), "GET", "/img/poster/7857.jpg", "", "", "127.0.0.1")
@@ -4788,6 +5038,51 @@ func TestStatusIncludesIdentify(t *testing.T) {
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Identify == nil || body.Identify.State != identify.StateIdle {
 		t.Fatalf("status %s", rec.Body)
+	}
+}
+
+func TestIdentifyUnknownFingerprintSkipsTMDB(t *testing.T) {
+	s, _ := identifyServer(t)
+	post(t, s, `{"fingerprint":"zz","action":"movie","tmdbId":7857}`)
+	if _, ok, _ := s.Store.Movie(7857); ok {
+		t.Fatal("movie fetched for an unknown fingerprint")
+	}
+}
+
+func TestIdentifyWithoutToken(t *testing.T) {
+	s, _ := identifyServer(t)
+	s.Identifier.TMDB = nil
+	if code := post(t, s, `{"fingerprint":"f1","action":"movie","tmdbId":7857}`); code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d", code)
+	}
+}
+
+func TestCrossSiteRequestsRejected(t *testing.T) {
+	s, _ := identifyServer(t)
+	h := s.Handler()
+	get := func(url, site, mode string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", url, nil)
+		req.Host = "127.0.0.1:8080"
+		req.Header.Set("Sec-Fetch-Site", site)
+		req.Header.Set("Sec-Fetch-Mode", mode)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for _, site := range []string{"cross-site", "same-site"} {
+		if rec := get("/img/poster/7857.jpg?p=/p.jpg", site, "no-cors"); rec.Code != http.StatusForbidden {
+			t.Errorf("%s image: %d", site, rec.Code)
+		}
+		if rec := get("/api/tmdb/search?q=Amarcord", site, "cors"); rec.Code != http.StatusForbidden {
+			t.Errorf("%s search: %d", site, rec.Code)
+		}
+	}
+	if rec := get("/", "cross-site", "navigate"); rec.Code != 200 {
+		t.Errorf("navigation from a link: %d", rec.Code)
+	}
+	rec := get("/api/versions", "same-origin", "cors")
+	if rec.Code != 200 || rec.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
+		t.Errorf("same origin: %d %q", rec.Code, rec.Header().Get("Cross-Origin-Resource-Policy"))
 	}
 }
 ```
@@ -4866,7 +5161,16 @@ func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON inválido", http.StatusBadRequest)
 		return
 	}
-	var err error
+	// Checked first so an unknown fingerprint costs no TMDB request.
+	known, err := s.Store.IsRepresentative(req.Fingerprint)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !known {
+		http.Error(w, store.ErrUnknownFingerprint.Error(), http.StatusNotFound)
+		return
+	}
 	switch req.Action {
 	case "movie", "extra":
 		if req.TMDBID <= 0 {
@@ -4910,6 +5214,8 @@ func tmdbError(w http.ResponseWriter, err error) {
 		http.Error(w, "no existe en TMDB", http.StatusNotFound)
 	case errors.Is(err, httpx.ErrOffline):
 		http.Error(w, "sin conexión con TMDB", http.StatusServiceUnavailable)
+	case errors.Is(err, identify.ErrNoToken):
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	case errors.Is(err, tmdb.ErrUnauthorized):
 		http.Error(w, err.Error(), http.StatusBadGateway)
 	default:
@@ -4928,19 +5234,22 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	path := r.URL.Query().Get("p")
 	m, found, err := s.Store.Movie(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var b []byte
 	if found {
-		path = m.PosterPath
+		path := m.PosterPath
 		if kind == images.Backdrop {
 			path = m.BackdropPath
 		}
+		b, err = s.Images.Get(r.Context(), kind, id, path)
+	} else {
+		// ?p= comes from the page (any page can send it): shown, never cached.
+		b, err = s.Images.Preview(r.Context(), kind, id, r.URL.Query().Get("p"))
 	}
-	b, err := s.Images.Get(r.Context(), kind, id, path)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -4999,6 +5308,10 @@ En `internal/server/server.go`, reemplazá:
 	mux.HandleFunc("POST /api/reveal", jsonOnly(func(w http.ResponseWriter, r *http.Request) { s.withFile(w, r, s.Revealer) }))
 	return localOnly(mux)
 }
+
+// localOnly rejects requests whose Host is not localhost (DNS rebinding).
+func localOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 ```
 
 por:
@@ -5012,6 +5325,40 @@ por:
 	mux.HandleFunc("GET /img/{kind}/{file}", s.image)
 	return localOnly(mux)
 }
+
+// localOnly rejects requests whose Host is not localhost (DNS rebinding) and
+// requests made by other sites' pages: an <img> or <script> pointing at the
+// app would otherwise reveal which movies the catalog has, or spend the TMDB
+// quota. Navigating to the app from a link still works.
+func localOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+```
+
+En `internal/server/server.go`, reemplazá:
+
+```go
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+```
+
+por:
+
+```go
+			return
+		}
+		site := r.Header.Get("Sec-Fetch-Site")
+		navigation := r.Method == http.MethodGet && r.Header.Get("Sec-Fetch-Mode") == "navigate"
+		if (site == "cross-site" || site == "same-site") && !navigation {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		// Browsers without Sec-Fetch-* still refuse to show the responses
+		// to other origins.
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
 ```
 
 En `internal/server/server.go`, reemplazá:

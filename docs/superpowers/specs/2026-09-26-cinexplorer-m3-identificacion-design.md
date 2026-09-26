@@ -71,7 +71,7 @@ Estados:
 - **Automáticos** (`auto`, `unmatched`): se recalculan si cambia `query` (el parser produce otro título/año/director/IMDb) o si `matcher_version < identify.MatcherVersion`.
 - **Sin fila**: pendiente (nunca procesada, o falló por red).
 
-**IMDb desde `.nfo`**: si la carpeta de la versión contiene un archivo de tipo `info`, se buscan ids `tt\d{7,8}` en su contenido (tope de 64 KiB leídos). Tiene prioridad sobre el IMDb extraído del nombre. Si hay varios `.nfo`, gana el primero por nombre que contenga un id.
+**IMDb desde `.nfo`**: si la carpeta de la versión contiene un archivo de tipo `info`, se buscan ids `tt\d{7,8}` en su contenido (tope de 64 KiB leídos). Tiene prioridad sobre el IMDb extraído del nombre. Si hay varios `.nfo`, gana el primero por nombre que contenga un id. En una carpeta con **varias versiones** (películas sueltas en una raíz o en `1970s/`), un `.nfo` solo cuenta para la versión cuyo archivo representativo empieza con el nombre del `.nfo` (`Amarcord.nfo` → `Amarcord CD1.avi`); si no, el IMDb de una película se impondría con confianza 1.0 a todas las de la carpeta.
 
 **Mejor versión**: `markBest` agrupa por `tmdb_id` para versiones `auto`/`manual`; el resto sigue con `quality.GroupKey`. El cálculo sigue haciéndose sobre todas las versiones, no sobre un subconjunto filtrado.
 
@@ -117,7 +117,7 @@ Por cada versión pendiente se arma una **consulta**: título, año y director d
 
 ## 8. Imágenes
 
-- `GET /img/poster/{tmdbId}.jpg` (w342) y `GET /img/backdrop/{tmdbId}.jpg` (w1280): se sirven desde `cache/posters/` y `cache/backdrops/`; si faltan, se descargan una vez (escritura a `.tmp` + rename), se guardan y se sirven. La ruta de TMDB sale de `movies`; para un candidato que todavía no es película guardada, la página la pasa como `?p=/abc.jpg` (validada: `^/[A-Za-z0-9_-]+\.(jpg|png)$`). Sin ruta, sin token o sin red → 404.
+- `GET /img/poster/{tmdbId}.jpg` (w342) y `GET /img/backdrop/{tmdbId}.jpg` (w1280): se sirven desde `cache/posters/` y `cache/backdrops/`; si faltan, se descargan una vez (cada descarga con su propio temporal + rename, así dos pedidos simultáneos no se pisan; guardar es best effort), se guardan y se sirven. La ruta de TMDB sale de `movies`; para un candidato que todavía no es película guardada, la página la pasa como `?p=/abc.jpg` (validada: `^/[A-Za-z0-9_-]+\.(jpg|png)$`) y la imagen se muestra **sin guardarse** (`Cache.Preview`): cualquier página puede mandar `?p=`, y no debe decidir qué imagen queda en caché para una película. Sin ruta, sin token o sin red → 404.
 - En modo consulta (directorio no escribible) se sirven sin guardar.
 - `config.json` suma `"imagePrefetch": "none" | "posters" | "all"` (vacío o desconocido = `"none"`). Con `posters`/`all` el Runner agrega una fase final que descarga lo que falte.
 
@@ -139,7 +139,7 @@ Por cada versión pendiente se arma una **consulta**: título, año y director d
 - `GET /api/versions`: suma `fingerprint`, `identification` (`{status, confidence, tmdbId}`) y `movie` (`{tmdbId, title, originalTitle, year, directors}`) cuando está identificada como película guardada.
 - `GET /api/unidentified`: versiones `unmatched` (una por huella) con los campos de versión y `candidates`.
 - `GET /api/tmdb/search?q=&year=`: búsqueda manual con candidatos puntuados; si `q` es `tt\d{7,8}`, usa `FindIMDb`. Sin token → 503.
-- `POST /api/identify` `{fingerprint, action: "movie"|"ignore"|"extra"|"reset", tmdbId}`: `movie`/`extra` validan el id contra TMDB y guardan la película en el momento (404 si no existe, 503 sin red); después relanzan el Runner (Wikidata, imágenes). `reset` borra la fila y relanza el Runner. Huella desconocida → 404. En modo consulta → 409, como `/api/scan`.
+- `POST /api/identify` `{fingerprint, action: "movie"|"ignore"|"extra"|"reset", tmdbId}`: `movie`/`extra` validan el id contra TMDB y guardan la película en el momento (404 si no existe, 503 sin red); después relanzan el Runner (Wikidata, imágenes). `reset` borra la fila y relanza el Runner. La huella se valida primero, antes de consultar TMDB: tiene que ser la del representativo de una versión (`store.IsRepresentative`); si no → 404, también en `reset`. Sin token → 503. En modo consulta → 409, como `/api/scan`.
 - `GET /img/{poster|backdrop}/{id}.jpg[?p=]`.
 - Página mínima: por versión, título TMDB · año · director e indicador (`92%`, `manual`, `sin identificar`, `no es película`, `extra`, `id inválido`); pestaña "Sin identificar" con candidatos (afiche chico, título, año, título original, %), botón **Confirmar** y campo de búsqueda manual (título o `tt…`). "Ignorar" y "extra de" quedan solo en la API (UI en Etapa 4). La línea de estado muestra el progreso y los estados `offline` / `noToken` / `badToken`.
 
@@ -152,6 +152,8 @@ Por cada versión pendiente se arma una **consulta**: título, año y director d
 - `.nfo` ilegible: se ignora (se identifica por nombre).
 - Catálogo de una etapa anterior abierto en modo consulta (sin tablas nuevas): la identidad queda vacía, sin errores.
 
+**Pedidos de otros sitios:** además del control de `Host` (DNS rebinding), el servidor rechaza con 403 los pedidos con `Sec-Fetch-Site: cross-site` o `same-site` salvo navegaciones GET, y agrega `Cross-Origin-Resource-Policy: same-origin` a todas las respuestas. Sin esto, una página cualquiera podría usar `<img src="http://127.0.0.1:PUERTO/img/poster/ID.jpg">` para averiguar qué películas hay en el catálogo, o gastar la cuota de TMDB.
+
 ## 12. Pruebas
 
 - **httpx**: reintentos 429/5xx, `Retry-After`, red caída → `ErrOffline`, estado final (401) sin reintento, encabezados, limitador.
@@ -163,3 +165,15 @@ Por cada versión pendiente se arma una **consulta**: título, año y director d
 - **scan**: `OnDone`, archivos vacíos sin huella (también en catálogos anteriores).
 - **server**: identificación manual, errores de `POST /api/identify`, `unidentified`, búsqueda, imágenes (candidato con `?p=`, caché, tipos y rutas inválidas), estado.
 - **Prueba real** (manual, fuera de CI): binario con `config.json` apuntando a una parte de la colección y token real; revisar la pestaña "Sin identificar" y que las automáticas sean correctas.
+
+## 13. Pendientes (revisión final de la Etapa 3)
+
+No bloquean; conviene tenerlos en cuenta en las etapas siguientes.
+
+- **Imágenes cacheadas solo por id de TMDB**: si cambia `poster_path` (los afiches de TMDB dependen del idioma, o TMDB los actualiza), se sigue sirviendo el archivo viejo. Guardar con un nombre derivado de la ruta o borrar el archivo cuando `SaveMovie` cambia la ruta. Es lo primero que se va a notar: conviene hacerlo al principio de la Etapa 4.
+- **Huérfanos**: identificaciones de huellas que ya no existen (archivo reescrito) y películas que solo ellas referencian no se borran; el prefetch y Wikidata las siguen procesando. Una corrección manual se pierde en silencio si su archivo se reescribe. Limpiar filas `auto`/`unmatched` sin archivo y restringir el prefetch a películas referenciadas.
+- **Clave de consulta inestable ante errores transitorios**: un `.nfo` ilegible en una corrida saca el IMDb de la clave y re-identifica por título; dos copias idénticas con nombres distintos pueden alternar la consulta según el orden. Tratar un error de lectura como "conservar el IMDb anterior".
+- **Errores por ítem que se reintentan en cada corrida**: un 4xx en la búsqueda o un 404 en `Movie()` durante el chequeo de directores hace fallar el ítem, que solo se registra en el log. Guardarlo como `unmatched` con los candidatos disponibles. Lo mismo para `manual`/`extra` que apuntan a un id inválido (un 404 por corrida).
+- **Candidatos en el idioma anterior**: tras cambiar `language`, los títulos de `candidates` de las `unmatched` quedan en el idioma viejo hasta que cambie la consulta o `MatcherVersion`.
+- **`Run` no participa del encolado de `Trigger`** (solo lo usan los tests); una cancelación deja el estado en `idle`.
+- **Lecturas de `Versions()` sin transacción** (pendiente de la Etapa 2): con el Runner escribiendo en segundo plano, una respuesta puede mezclar estados. Envolver las consultas de `Versions()`/`Unidentified()` en una transacción de lectura.
