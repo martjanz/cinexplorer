@@ -17,10 +17,16 @@ sin modificarlas y guarda su catálogo junto al ejecutable.
 Si la carpeta no se puede escribir (por ejemplo, un disco NTFS en macOS), la app
 arranca en modo consulta con el catálogo existente.
 
+Además de los nombres, la app lee los encabezados de los videos (MKV, MP4/MOV,
+AVI e IFO de DVD) para conocer resolución, codecs, duración y pistas de audio y
+subtítulos. Si `ffprobe` está instalado y en el PATH, se usa para los formatos
+que no lee por su cuenta (RMVB, MPG, WMV…); no es obligatorio.
+
 ## Desarrollo
 
 ```bash
 go test ./...
+CINEXPLORER_PROBE_CORPUS=D:/cine go test ./internal/probe -run Corpus -v -timeout 0
 go run ./cmd/cinexplorer -dir .run
 bash scripts/build.sh
 ```
