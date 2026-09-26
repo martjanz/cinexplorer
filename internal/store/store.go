@@ -10,6 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"cinexplorer/internal/grouping"
+	"cinexplorer/internal/probe"
 )
 
 //go:embed schema.sql
@@ -54,6 +55,15 @@ type VersionView struct {
 	Parts      int        `json:"parts"`
 	SubLangs   string     `json:"subLangs"`
 	Files      []FileView `json:"files"`
+
+	// Technical data read from the files (zero when not probed yet).
+	DurationMs int64         `json:"durationMs"`
+	Width      int           `json:"width"`
+	Height     int           `json:"height"`
+	VideoCodec string        `json:"videoCodec"`
+	Audio      []probe.Track `json:"audio"`
+	Subs       []probe.Track `json:"subs"` // embedded subtitle tracks
+	Best       bool          `json:"best"` // best of several versions of the same movie
 }
 
 type Duplicate struct {
@@ -233,7 +243,8 @@ func (s *Store) ReplaceVersions(vs []grouping.Version) error {
 	return tx.Commit()
 }
 
-// Versions returns every version with its files, ordered by title and year.
+// Versions returns every version with its files and technical data, ordered
+// by title and year.
 func (s *Store) Versions() ([]VersionView, error) {
 	rows, err := s.db.Query(`SELECT id, dir, title, year, director, countries, resolution, source, codec, language,
 		size, parts, sub_langs FROM versions ORDER BY title COLLATE NOCASE, year, id`)
@@ -243,12 +254,13 @@ func (s *Store) Versions() ([]VersionView, error) {
 	out := []VersionView{}
 	pos := map[int64]int{}
 	for rows.Next() {
-		v := VersionView{Files: []FileView{}}
+		v := VersionView{Files: []FileView{}, Audio: []probe.Track{}, Subs: []probe.Track{}}
 		if err := rows.Scan(&v.ID, &v.Dir, &v.Title, &v.Year, &v.Director, &v.Countries, &v.Resolution,
 			&v.Source, &v.Codec, &v.Language, &v.Size, &v.Parts, &v.SubLangs); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		v.Codec = probe.CodecFromName(v.Codec)
 		pos[v.ID] = len(out)
 		out = append(out, v)
 	}
@@ -274,7 +286,14 @@ func (s *Store) Versions() ([]VersionView, error) {
 			out[i].Files = append(out[i].Files, f)
 		}
 	}
-	return out, frows.Err()
+	if err := frows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachMedia(out, pos); err != nil {
+		return nil, err
+	}
+	markBest(out)
+	return out, nil
 }
 
 // Duplicates returns groups of present files with the same fingerprint,
