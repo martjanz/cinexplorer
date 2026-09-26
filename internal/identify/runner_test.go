@@ -100,10 +100,10 @@ func TestRunIdentifiesAndEnriches(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, d := current(t, r.Store, "a1"), current(t, r.Store, "vob")
-	if a.Status != store.StatusAuto || a.TMDBID != 7857 || a.Query != "Amarcord|1973||" || a.MatcherVersion != MatcherVersion {
+	if a.Status != store.StatusAuto || a.TMDBID != 7857 || a.Query != "Amarcord|1973|||es-ES" || a.MatcherVersion != MatcherVersion {
 		t.Fatalf("amarcord %+v", a)
 	}
-	if d.Status != store.StatusAuto || d.TMDBID != 1398 || d.Confidence != 1 || d.Query != "d|0||tt0079944" {
+	if d.Status != store.StatusAuto || d.TMDBID != 1398 || d.Confidence != 1 || d.Query != "d|0||tt0079944|es-ES" {
 		t.Fatalf("stalker %+v", d)
 	}
 	m, ok, _ := r.Store.Movie(7857)
@@ -177,7 +177,7 @@ func TestRunKeepsCorrectionsAndRematchesStale(t *testing.T) {
 	setVersions(t, r.Store, "Amarcord")
 	api.calls = nil
 	r.Run(ctx)
-	if api.called("search Amarcord|1973") != 1 || current(t, r.Store, "a1").Query != "Amarcord|1973||" {
+	if api.called("search Amarcord|1973") != 1 || current(t, r.Store, "a1").Query != "Amarcord|1973|||es-ES" {
 		t.Fatalf("stale query not redone: %v", api.calls)
 	}
 
@@ -189,6 +189,45 @@ func TestRunKeepsCorrectionsAndRematchesStale(t *testing.T) {
 	r.Run(ctx)
 	if api.called("search") != 1 {
 		t.Fatalf("old matcher result not redone: %v", api.calls)
+	}
+}
+
+func TestRunRematchesOnLanguageChange(t *testing.T) {
+	r, api, _ := fixture(t)
+	ctx := context.Background()
+	r.Store.SaveIdentifications([]store.Identification{{Fingerprint: "a1", Status: store.StatusUnmatched,
+		Query: "Amarcord|1973|||es-ES", MatcherVersion: MatcherVersion}})
+	r.Run(ctx)
+	if api.called("search Amarcord") != 0 {
+		t.Fatalf("up to date result redone: %v", api.calls)
+	}
+	// Candidates carry titles in the configured language: another language
+	// means another search.
+	r.Language = "en-US"
+	api.search["Amarcord|1973|en-US"] = api.search["Amarcord|1973|es-ES"]
+	api.movies["7857|en-US"] = details(7857, "Amarcord", "1973-12-18", "Rimini.", "Federico Fellini")
+	r.Run(ctx)
+	if a := current(t, r.Store, "a1"); api.called("search Amarcord|1973|en-US") != 1 || a.Status != store.StatusAuto || a.Query != "Amarcord|1973|||en-US" {
+		t.Fatalf("language change: %+v calls %v", a, api.calls)
+	}
+}
+
+func TestRunSavesFailedItemAsUnmatched(t *testing.T) {
+	r, api, _ := fixture(t)
+	ctx := context.Background()
+	api.fail = map[string]error{"Amarcord|1973|es-ES": errors.New("respuesta inesperada")}
+	if err := r.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a := current(t, r.Store, "a1")
+	if a == nil || a.Status != store.StatusUnmatched || len(a.Candidates) != 0 || a.Query != "Amarcord|1973|||es-ES" || a.MatcherVersion != MatcherVersion {
+		t.Fatalf("failed item %+v", a)
+	}
+	// It shows up for review instead of being retried on every run.
+	api.calls = nil
+	r.Run(ctx)
+	if api.called("search") != 0 {
+		t.Fatalf("failed item retried: %v", api.calls)
 	}
 }
 
@@ -357,7 +396,7 @@ func TestRunFallsBackToFolderName(t *testing.T) {
 	}
 	g := current(t, r.Store, "g1")
 	if g.Status != store.StatusAuto || g.TMDBID != 537898 ||
-		g.Query != "Los Gauchos Judios Rip mentecato|0||"+"|Los Gauchos Judíos|1974|Juan José Jusid|" {
+		g.Query != "Los Gauchos Judios Rip mentecato|0||"+"|Los Gauchos Judíos|1974|Juan José Jusid||es-ES" {
 		t.Fatalf("gauchos %+v", g)
 	}
 }

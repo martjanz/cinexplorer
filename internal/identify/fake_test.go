@@ -17,6 +17,7 @@ type fakeAPI struct {
 	find   map[string][]tmdb.Result
 	movies map[string]tmdb.Details // "id|lang"
 	err    error                   // returned by every call when set
+	fail   map[string]error        // returned by the search with that key
 	calls  []string
 }
 
@@ -30,6 +31,9 @@ func (f *fakeAPI) record(call string) error {
 func (f *fakeAPI) SearchMovie(ctx context.Context, q string, year int, lang string) ([]tmdb.Result, error) {
 	key := fmt.Sprintf("%s|%d|%s", q, year, lang)
 	if err := f.record("search " + key); err != nil {
+		return nil, err
+	}
+	if err := f.fail[key]; err != nil {
 		return nil, err
 	}
 	return f.search[key], nil

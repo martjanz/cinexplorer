@@ -205,14 +205,14 @@ type job struct {
 // needsMatch reports whether a fingerprint has to be (re)matched: never
 // matched, or matched by the matcher for another query or an older version
 // of it. Corrections are never redone.
-func needsMatch(cur *store.Identification, q Query) bool {
+func needsMatch(cur *store.Identification, q Query, lang string) bool {
 	if cur == nil {
 		return true
 	}
 	if cur.Status != store.StatusAuto && cur.Status != store.StatusUnmatched {
 		return false
 	}
-	return cur.Query != q.Key() || cur.MatcherVersion < MatcherVersion
+	return cur.Query != q.storedKey(lang) || cur.MatcherVersion < MatcherVersion
 }
 
 func (r *Runner) identifyAll(ctx context.Context, fetched map[int]tmdb.Details) error {
@@ -232,7 +232,7 @@ func (r *Runner) identifyAll(ctx context.Context, fetched map[int]tmdb.Details) 
 		if f := nameparse.Parse(path.Base(t.Dir)); f.Year > 0 && (f.Title != q.Title || f.Year != q.Year) {
 			q.Folder = &Query{Title: f.Title, Year: f.Year, Director: f.Director}
 		}
-		if needsMatch(t.Current, q) {
+		if needsMatch(t.Current, q, r.Language) {
 			jobs = append(jobs, job{t.Fingerprint, q})
 		}
 	}
@@ -258,8 +258,10 @@ func (r *Runner) identifyAll(ctx context.Context, fetched map[int]tmdb.Details) 
 			return errors.Join(err, flush())
 		}
 		if err != nil {
+			// Left for review rather than retried on every run.
 			log.Printf("no se pudo identificar %q: %v", j.query.Title, err)
-			continue
+			id = store.Identification{Status: store.StatusUnmatched, Query: j.query.storedKey(r.Language),
+				MatcherVersion: MatcherVersion}
 		}
 		for k, d := range details {
 			fetched[k] = d

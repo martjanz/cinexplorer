@@ -60,6 +60,22 @@ func TestSearchDirectorBreaksTies(t *testing.T) {
 	}
 }
 
+func TestSearchSkipsMissingCredits(t *testing.T) {
+	// A candidate whose details TMDB no longer has gets no director share,
+	// instead of failing the whole search.
+	api := &fakeAPI{
+		search: map[string][]tmdb.Result{"Ordet|0|es-ES": {
+			{ID: 262879, Title: "Ordet", ReleaseDate: "1943-01-01"},
+			{ID: 48035, Title: "La palabra", OriginalTitle: "Ordet", ReleaseDate: "1955-01-10"},
+		}},
+		movies: map[string]tmdb.Details{"48035|es-ES": details(48035, "La palabra", "1955-01-10", "", "Carl Theodor Dreyer")},
+	}
+	id, _, err := Identify(context.Background(), api, "es-ES", Query{Title: "Ordet", Director: "Dreyer"})
+	if err != nil || id.Status != store.StatusAuto || id.TMDBID != 48035 {
+		t.Fatalf("got %+v, %v", id, err)
+	}
+}
+
 func TestIdentifyWithoutTitle(t *testing.T) {
 	api := &fakeAPI{}
 	id, _, err := Identify(context.Background(), api, "es-ES", Query{})

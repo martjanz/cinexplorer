@@ -14,8 +14,9 @@ import (
 )
 
 // MatcherVersion changes whenever the matching algorithm or its thresholds
-// change, so earlier automatic results are recomputed.
-const MatcherVersion = 1
+// change, so earlier automatic results are recomputed. 2: the language is
+// part of the stored query; unavailable credits no longer fail a search.
+const MatcherVersion = 2
 
 // A version is assigned automatically when its best candidate scores at
 // least AutoThreshold and beats the runner-up by at least AutoMargin.
@@ -49,13 +50,20 @@ type Query struct {
 	Folder *Query
 }
 
-// Key identifies the query; a stored result made for another key is stale.
+// Key identifies the query.
 func (q Query) Key() string {
 	k := fmt.Sprintf("%s|%d|%s|%s", q.Title, q.Year, q.Director, q.IMDbID)
 	if q.Folder != nil {
 		k += "|" + q.Folder.Key()
 	}
 	return k
+}
+
+// storedKey identifies a query made in a language: a stored result made for
+// another key is stale. The language counts because the candidates' titles
+// are in it.
+func (q Query) storedKey(lang string) string {
+	return q.Key() + "|" + lang
 }
 
 // Search returns scored candidates, best first, and the details fetched on
@@ -110,8 +118,13 @@ func Search(ctx context.Context, api API, lang string, q Query) ([]store.Candida
 	if q.Director != "" {
 		for i := range min(directorChecks, len(cands)) {
 			d, err := api.Movie(ctx, cands[i].TMDBID, lang)
-			if err != nil {
+			if fatal(err) {
 				return nil, nil, err
+			}
+			if err != nil {
+				// Details TMDB cannot give now (a removed movie) only cost
+				// the candidate its director share.
+				continue
 			}
 			details[d.ID] = d
 			var names []string
@@ -147,7 +160,7 @@ func Identify(ctx context.Context, api API, lang string, q Query) (store.Identif
 			id = alt
 		}
 	}
-	id.Query = q.Key()
+	id.Query = q.storedKey(lang)
 	return id, details, nil
 }
 
