@@ -1,7 +1,7 @@
 # Cinexplorer — Etapa 3: Identificación — Diseño
 
 Fecha: 2026-09-26
-Estado: aprobado en brainstorming
+Estado: aprobado en brainstorming; ajustado tras prototipar (§3 archivos vacíos, §6 variantes, inglés y carpeta)
 Spec general: `2026-09-25-cinexplorer-design.md` (§3.1, §4 pasos 5–6, §4.2, §5.5)
 
 ## 1. Objetivo
@@ -24,6 +24,8 @@ Asociar cada versión en disco a una película de TMDB, con asignación automát
 
 Una versión sin huella (archivo aún no hasheado) no se identifica hasta que la tenga.
 
+**Archivos vacíos** (0 bytes: copias fallidas o marcadores; hay 32 en la colección real): todos tendrían la misma huella y una identificación se contagiaría entre ellos, además de figurar como copias idénticas. `fingerprint.Of` devuelve `""` para ellos, así que no tienen huella, no son copias ni se identifican; la versión conserva los datos del nombre. El escáner no reutiliza la huella guardada de un archivo vacío, de modo que los catálogos anteriores se corrigen en el siguiente escaneo.
+
 ## 4. Persistencia
 
 ```sql
@@ -36,7 +38,7 @@ CREATE TABLE IF NOT EXISTS movies (
   original_lang  TEXT    NOT NULL DEFAULT '',
   overview       TEXT    NOT NULL DEFAULT '',
   directors      TEXT    NOT NULL DEFAULT '[]', -- JSON [{id,name}]
-  cast           TEXT    NOT NULL DEFAULT '[]', -- JSON [{id,name,character}], primeros 10
+  cast_members   TEXT    NOT NULL DEFAULT '[]', -- JSON [{id,name,character}], primeros 10
   genres         TEXT    NOT NULL DEFAULT '[]', -- JSON nombres localizados
   countries      TEXT    NOT NULL DEFAULT '[]', -- JSON ISO 3166-1 alfa-2
   collection_id  INTEGER NOT NULL DEFAULT 0,
@@ -75,63 +77,71 @@ Estados:
 
 ## 5. Cliente TMDB (`internal/tmdb`)
 
+El limitador y los reintentos viven en `internal/httpx` (compartido con Wikidata): `Limiter` (token bucket propio, sin dependencias) y `Client.Get` (GET con reintentos que devuelve el cuerpo de un 2xx, `*StatusError` para otros códigos finales y `ErrOffline` al agotar los intentos).
+
 - Auth: `Authorization: Bearer <tmdbToken>` (token de lectura v4 de `config.json`). URL base inyectable para tests.
-- Rate limit: token bucket propio (sin dependencias), 20 req/s, ráfaga 10.
-- Reintentos: 429 (respeta `Retry-After`), 5xx y errores de red → backoff exponencial 1, 2, 4, 8, 16 s con jitter; máximo 5 intentos.
-- Errores tipados: `ErrOffline` (red/DNS/timeout tras agotar reintentos), `ErrUnauthorized` (401), `ErrNotFound` (404).
+- Rate limit: 20 req/s, ráfaga 10.
+- Reintentos: 429 (respeta `Retry-After`), 5xx y errores de red → backoff exponencial 1, 2, 4, 8 s con jitter; 5 intentos en total.
+- Errores tipados: `ErrOffline` (= `httpx.ErrOffline`: red/DNS/timeout o 429/5xx tras agotar reintentos), `ErrUnauthorized` (401), `ErrNotFound` (404).
 - Métodos:
   - `SearchMovie(ctx, query string, year int, lang string) ([]Result, error)` — `/3/search/movie`.
   - `FindIMDb(ctx, imdbID, lang string) ([]Result, error)` — `/3/find/{id}?external_source=imdb_id`.
-  - `Movie(ctx, id int, lang string) (Details, error)` — `/3/movie/{id}?append_to_response=credits,external_ids`.
+  - `Movie(ctx, id int, lang string) (Details, error)` — `/3/movie/{id}?append_to_response=credits` (el IMDb id viene en el campo `imdb_id` de la película).
   - `Image(ctx, path, size string) ([]byte, error)` — `image.tmdb.org/t/p/{size}{path}`.
+
 
 ## 6. Identificación (`internal/identify`)
 
-Por cada versión pendiente:
+Por cada versión pendiente se arma una **consulta**: título, año y director del nombre, IMDb del `.nfo` o del nombre, y, si el nombre de la carpeta parece de película (el parser le encuentra año) y difiere del de la versión, una **consulta alternativa por carpeta**. Esto cubre carpetas con varias versiones que conservan nombres de archivo pobres (`Los Gauchos Judios Rip mentecato cd 01.avi` dentro de `Los Gauchos Judíos (Juan José Jusid, Argentina, 1974)`). La clave de la consulta (`query`) incluye la alternativa.
 
-1. **IMDb** (del `.nfo` o del nombre) → `FindIMDb`. Con resultado: `auto`, confianza 1.0.
-2. Si no: `SearchMovie(título, año)` en el idioma configurado; sin resultados → reintenta sin año. Se puntúan los primeros 10 resultados.
-3. **Puntaje** (0..1):
-   - Título (≤ 0.60): máxima similitud entre el título parseado y `title` / `original_title` del candidato, ambos normalizados como en `quality.GroupKey` (sin tildes, puntuación ni artículos iniciales), por Levenshtein normalizado (`1 − dist/max(len)`), × 0.60.
+1. **IMDb** → `FindIMDb`. Con resultado: `auto`, confianza 1.0.
+2. **Variantes del título**: el texto fuera de paréntesis/corchetes y cada parte entre ellos (`La piel dura (L'argent de poche)` → `La piel dura`, `L'argent de poche`). Se busca la primera; las demás solo si el resultado no es concluyente, y los resultados se suman (hasta 10 películas). Cada búsqueda es `SearchMovie(variante, año)` y, sin resultados, sin año.
+3. **Títulos en inglés**: si con el idioma configurado no es concluyente, se busca también en `en-US` y el título inglés de cada película cuenta para la similitud (archivos nombrados en inglés: *Cries and Whispers* es *Gritos y susurros* / *Viskningar och rop*).
+4. **Puntaje** (0..1):
+   - Título (≤ 0.60): máxima similitud entre cualquier variante y `title` / `original_title` / título inglés del candidato, normalizados con `quality.NormTitle` (sin tildes, puntuación ni artículos iniciales), por Levenshtein normalizado (`1 − dist/max(len)`), × 0.60.
    - Año (≤ 0.25): exacto 0.25; ±1 0.15; sin año parseado 0.10; otro 0.
-   - Director (≤ 0.15): solo si el nombre trae director. Para los 3 mejores candidatos por título+año se pide `Movie()` (se reutiliza luego al enriquecer) y suma 0.15 si algún director de TMDB coincide (apellido normalizado del parseado contenido en el nombre normalizado de TMDB). Sin director parseado, el puntaje título+año se reescala dividiendo por 0.85.
-4. **Asignación automática** si mejor ≥ `AutoThreshold` (0.80) y supera al segundo por ≥ `AutoMargin` (0.10). Si no: `unmatched` con los 5 mejores candidatos. Umbrales como constantes, calibrados con el corpus grabado.
-5. Sin resultados: `unmatched` sin candidatos.
+   - Director (≤ 0.15): solo si el nombre trae director. Para los 3 mejores candidatos se pide `Movie()` (se reutiliza al enriquecer) y suma 0.15 si la última palabra del director parseado es una palabra de algún director de TMDB (`Polanski` ↔ `Roman Polański`). Sin director parseado, título + año se reescala dividiendo por 0.85.
+5. **Concluyente** si el mejor ≥ `AutoThreshold` (0.80) y supera al segundo por ≥ `AutoMargin` (0.10) → `auto`. Si no: `unmatched` con los 5 mejores candidatos.
+6. Si la consulta no fue concluyente y hay alternativa por carpeta, se identifica con ella y se queda el mejor resultado (concluyente, o de mayor confianza).
 
 `MatcherVersion` empieza en 1 y sube cuando cambia el algoritmo o los umbrales.
 
+`quality.folds` suma letras de Europa del Este y del turco (`ł`, `ń`, `š`, `ş`, `ı`…) para que la normalización las pliegue.
+
+**Calibración** (corpus de 30 nombres reales de `D:\cine`, respuestas de TMDB grabadas): 23 automáticas, todas correctas, sin falsos positivos. Quedan para revisión los empates reales (*Hamaca paraguaya* 2000/2006, *Ordet* 1943/1955), títulos que TMDB no tiene o no reconoce (*Los traidores*, *El cazador (Shekarchi)*, un nombre con errata) y *Star Wars Episode IV A New Hope* (TMDB la titula *Star Wars*). Prueba sobre `D:\cine\1970s` completo: 33 automáticas de 41 versiones, todas correctas.
+
 ## 7. Enriquecimiento
 
-- Para cada `tmdb_id` referenciado por identificaciones `auto`/`manual`/`extra` que no está en `movies` o cuyo `language` difiere del configurado: `Movie(id, lang)`. Si `title` u `overview` vienen vacíos: `Movie(id, "en-US")` y se completan. Directores: `credits.crew` con `job = "Director"`. Reparto: primeros 10 de `credits.cast` por `order`. Países: `production_countries[].iso_3166_1`. IMDb: `external_ids.imdb_id`.
-- **Wikidata** (`internal/wikidata`): películas con `wikidata_state = 0`, en lotes de hasta 50, consulta SPARQL a `query.wikidata.org/sparql` con `VALUES ?tmdb {…}` sobre P4947, trayendo QID, P345, P495 (→ ISO por P297), P57 (etiqueta en el idioma configurado, fallback `en`) y P577 (año). `User-Agent: cinexplorer/<versión> (https://github.com/martjanz/cinexplorer)`. 1 req/s, mismos reintentos. Solo llena campos vacíos; siempre guarda `wikidata_id` si lo hay. Sin coincidencia → `wikidata_state = 1` igual.
+- Para cada `tmdb_id` referenciado por identificaciones `auto`/`manual`/`extra` que no está en `movies` o cuyo `language` difiere del configurado: `Movie(id, lang)` (o los datos ya pedidos al identificar, en la misma corrida). Si `title` u `overview` vienen vacíos: `Movie(id, "en-US")` y se completan. Directores: `credits.crew` con `job = "Director"`. Reparto: primeros 10 de `credits.cast` por `order`. Países: `production_countries[].iso_3166_1`. IMDb: `imdb_id`.
+- **Wikidata** (`internal/wikidata`): películas con `wikidata_state = 0`, en lotes de hasta 50, consulta SPARQL a `query.wikidata.org/sparql` con `VALUES ?tmdb {…}` sobre P4947, trayendo QID, P345, P495 (→ ISO por P297), P57 (etiqueta en el idioma configurado, fallback `en`) y P577 (año más temprano). `User-Agent: cinexplorer/<versión> (https://github.com/martjanz/cinexplorer)`. 1 req/s, mismos reintentos. Solo llena campos vacíos; siempre guarda `wikidata_id` si lo hay. Sin coincidencia → `wikidata_state = 1` igual. Un error que no es de red saltea la fase hasta la próxima corrida.
 
 ## 8. Imágenes
 
-- `GET /img/poster/{tmdbId}.jpg` (w342) y `GET /img/backdrop/{tmdbId}.jpg` (w1280): se sirven desde `cache/posters/` y `cache/backdrops/`; si faltan, se descargan una vez (escritura a `.tmp` + rename), se guardan y se sirven. Sin ruta en `movies` o sin red → 404.
+- `GET /img/poster/{tmdbId}.jpg` (w342) y `GET /img/backdrop/{tmdbId}.jpg` (w1280): se sirven desde `cache/posters/` y `cache/backdrops/`; si faltan, se descargan una vez (escritura a `.tmp` + rename), se guardan y se sirven. La ruta de TMDB sale de `movies`; para un candidato que todavía no es película guardada, la página la pasa como `?p=/abc.jpg` (validada: `^/[A-Za-z0-9_-]+\.(jpg|png)$`). Sin ruta, sin token o sin red → 404.
 - En modo consulta (directorio no escribible) se sirven sin guardar.
 - `config.json` suma `"imagePrefetch": "none" | "posters" | "all"` (vacío o desconocido = `"none"`). Con `posters`/`all` el Runner agrega una fase final que descarga lo que falte.
 
 ## 9. Runner y pipeline
 
-`identify.Runner.Run(ctx)`, invocado por el escáner después de la fase de análisis técnico:
+`identify.Runner`: `Trigger()` lanza una corrida en segundo plano (un `Trigger` durante una corrida encola exactamente una más); `Run(ctx)` corre una sincrónicamente (tests). El escáner llama a `Trigger` al terminar cada escaneo (`Scanner.OnDone`).
 
 1. Sin `tmdbToken`: no hace nada; estado `noToken`.
 2. Fases en orden: **identificar** (huellas pendientes) → **enriquecer** → **Wikidata** → **prefetch** (opcional).
-3. Guardado cada 20 resultados y al final. Cancelable por `ctx`.
-4. `ErrOffline`: corta la fase, estado `offline`, y programa un nuevo `Run` a los 5 min, duplicando hasta 1 h mientras siga offline. Un escaneo manual también lo relanza (y reinicia el backoff).
+3. Guardado cada 20 identificaciones y al final. Cancelable por `ctx`.
+4. `ErrOffline` (TMDB, Wikidata o imágenes): corta la corrida, estado `offline`, y programa un `Trigger` a los 5 min, duplicando hasta 1 h mientras siga offline. Cada corrida cancela el reintento pendiente; una corrida que termina sin estar offline reinicia el backoff.
 5. `ErrUnauthorized`: corta todo, estado `badToken`, sin reintentos automáticos.
-6. Un solo `Run` a la vez; un pedido mientras corre se encola (a lo sumo uno).
+6. Otros errores de un ítem (JSON inesperado, etc.): se registran y se sigue con el siguiente.
 
-`scan.Status` suma `identified`, `toIdentify`, `enriched`, `toEnrich` e `identify` (`idle` | `running` | `offline` | `noToken` | `badToken`).
+`GET /api/status` suma `identify: {state, toIdentify, identified, toEnrich, enriched}` (`state`: `idle` | `running` | `offline` | `noToken` | `badToken`; `null` en modo consulta).
 
 ## 10. API y página
 
-- `GET /api/versions`: suma `fingerprint`, `identification` (`{status, confidence}`) y `movie` (`{tmdbId, title, originalTitle, year, directors}`) cuando está identificada.
-- `GET /api/unidentified`: versiones `unmatched` con ruta, tokens parseados y candidatos.
-- `GET /api/tmdb/search?q=&year=`: búsqueda manual con candidatos puntuados; si `q` es `tt\d+`, usa `FindIMDb`.
-- `POST /api/identify` `{fingerprint, action: "movie"|"ignore"|"extra"|"reset", tmdbId}`: `movie`/`extra` validan el id contra TMDB y enriquecen en el momento; `reset` borra la fila y relanza el Runner. En modo consulta → 403.
-- `GET /img/{poster|backdrop}/{id}.jpg`.
-- Página mínima: por versión, título TMDB · año · director e indicador de confianza; sección "Sin identificar" con candidatos (afiche chico, título, año, %), botón **Confirmar** y campo de búsqueda manual. "Ignorar" y "extra de" quedan solo en la API (UI en Etapa 4).
+- `GET /api/versions`: suma `fingerprint`, `identification` (`{status, confidence, tmdbId}`) y `movie` (`{tmdbId, title, originalTitle, year, directors}`) cuando está identificada como película guardada.
+- `GET /api/unidentified`: versiones `unmatched` (una por huella) con los campos de versión y `candidates`.
+- `GET /api/tmdb/search?q=&year=`: búsqueda manual con candidatos puntuados; si `q` es `tt\d{7,8}`, usa `FindIMDb`. Sin token → 503.
+- `POST /api/identify` `{fingerprint, action: "movie"|"ignore"|"extra"|"reset", tmdbId}`: `movie`/`extra` validan el id contra TMDB y guardan la película en el momento (404 si no existe, 503 sin red); después relanzan el Runner (Wikidata, imágenes). `reset` borra la fila y relanza el Runner. Huella desconocida → 404. En modo consulta → 409, como `/api/scan`.
+- `GET /img/{poster|backdrop}/{id}.jpg[?p=]`.
+- Página mínima: por versión, título TMDB · año · director e indicador (`92%`, `manual`, `sin identificar`, `no es película`, `extra`, `id inválido`); pestaña "Sin identificar" con candidatos (afiche chico, título, año, título original, %), botón **Confirmar** y campo de búsqueda manual (título o `tt…`). "Ignorar" y "extra de" quedan solo en la API (UI en Etapa 4). La línea de estado muestra el progreso y los estados `offline` / `noToken` / `badToken`.
 
 ## 11. Errores
 
@@ -140,12 +150,16 @@ Por cada versión pendiente:
 - JSON inesperado: se registra y se omite ese ítem.
 - Token inválido: estado `badToken`.
 - `.nfo` ilegible: se ignora (se identifica por nombre).
+- Catálogo de una etapa anterior abierto en modo consulta (sin tablas nuevas): la identidad queda vacía, sin errores.
 
 ## 12. Pruebas
 
-- **tmdb**: `httptest.Server` con JSON grabados en `testdata/`; rate limit, reintentos 429/5xx, `Retry-After`, `ErrOffline`, 401, 404.
-- **identify**: puntaje por tabla (título, año ±1, director, reescalado); corpus de ~20 nombres reales con búsquedas grabadas para calibrar umbrales; Runner con TMDB/Wikidata falsos: correcciones no se pisan, cambio de `query` re-identifica, `MatcherVersion` re-identifica, offline programa reintento, 401 corta.
-- **wikidata**: JSON SPARQL grabado; solo completa huecos.
-- **store**: tablas nuevas, representativo por versión, `markBest` por `tmdb_id`, estados de corrección, `.nfo`.
-- **server**: endpoints nuevos, caché de imágenes (hit, miss con descarga, sin red → 404, modo consulta).
-- **Corpus real** (opcional, fuera de CI): `CINEXPLORER_IDENTIFY_CORPUS=<dir>` + `CINEXPLORER_TMDB_TOKEN`, reporta tasa de identificación automática y los `unmatched`.
+- **httpx**: reintentos 429/5xx, `Retry-After`, red caída → `ErrOffline`, estado final (401) sin reintento, encabezados, limitador.
+- **tmdb**: `httptest.Server`; búsqueda, find, detalles con créditos, imágenes, 401/404/503/JSON roto.
+- **wikidata**: respuesta SPARQL real grabada (`testdata/lookup.json`); agregación por película, etiquetas sin nombre descartadas, lotes.
+- **images**: descarga única, sin red / sin fetcher / rutas inválidas → `ErrUnavailable`, modo consulta no guarda.
+- **store**: tablas nuevas, representativo por versión (partes, DVD, copias idénticas), correcciones que el matcher no pisa, películas, cola de enriquecimiento y Wikidata, invalidación, `markBest` por `tmdb_id`, `Unidentified`, catálogo viejo en modo consulta.
+- **identify**: puntaje por tabla; `Search` con API falso (sin año, inglés, director que desempata, IMDb inexistente); **corpus** (`corpus_test.go`) con 30 nombres reales y respuestas de TMDB grabadas en `testdata/tmdb_corpus.json` — se regraba con `CINEXPLORER_TMDB_RECORD=1` y un token en `CINEXPLORER_TMDB_TOKEN` o `~/.cinexplorer-tmdb-token`; Runner con TMDB/Wikidata falsos: identificación + enriquecimiento + Wikidata, reutilización de detalles, correcciones no se pisan, cambio de `query` y `MatcherVersion` re-identifican, reintentos offline con backoff, 401, id inexistente, error de Wikidata, prefetch, `Adopt`, `Trigger`, alternativa por carpeta.
+- **scan**: `OnDone`, archivos vacíos sin huella (también en catálogos anteriores).
+- **server**: identificación manual, errores de `POST /api/identify`, `unidentified`, búsqueda, imágenes (candidato con `?p=`, caché, tipos y rutas inválidas), estado.
+- **Prueba real** (manual, fuera de CI): binario con `config.json` apuntando a una parte de la colección y token real; revisar la pestaña "Sin identificar" y que las automáticas sean correctas.
