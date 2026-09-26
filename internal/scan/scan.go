@@ -43,6 +43,9 @@ type Scanner struct {
 	// ProbeEnv then taken from the probe package.
 	Probe    func(ctx context.Context, path string) (probe.Info, error)
 	ProbeEnv store.ProbeEnv
+	// OnDone runs after every scan, finished or not (the identification
+	// runner hangs here).
+	OnDone func()
 
 	mu     sync.Mutex
 	status Status
@@ -73,6 +76,9 @@ func (s *Scanner) Run(ctx context.Context) error {
 		s.status.LastError = err.Error()
 	}
 	s.mu.Unlock()
+	if s.OnDone != nil {
+		s.OnDone()
+	}
 	return err
 }
 

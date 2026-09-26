@@ -311,3 +311,15 @@ func TestScanForgetsFingerprintOfEmptyFiles(t *testing.T) {
 		t.Fatalf("empty files reported as copies: %+v", d)
 	}
 }
+
+func TestScanCallsOnDone(t *testing.T) {
+	_, app, st := setup(t)
+	calls := 0
+	sc := &Scanner{AppDir: app, Roots: []string{"../missing"}, Store: st, OnDone: func() { calls++ }}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("OnDone called %d times", calls)
+	}
+}

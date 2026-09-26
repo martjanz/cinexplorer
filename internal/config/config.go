@@ -15,8 +15,11 @@ const FileName = "config.json"
 
 type Config struct {
 	Roots     []string `json:"roots"`     // catalog-form paths, relative to the app dir
-	TMDBToken string   `json:"tmdbToken"` // used from stage 3 on
+	TMDBToken string   `json:"tmdbToken"` // TMDB v4 read access token
 	Language  string   `json:"language"`
+	// ImagePrefetch downloads images ahead: "posters", "all", or "none"
+	// (the default: on demand only).
+	ImagePrefetch string `json:"imagePrefetch,omitempty"`
 }
 
 // Load reads config.json from appDir. When the file does not exist it returns

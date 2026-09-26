@@ -30,7 +30,7 @@ func TestLoadDefaultsToSiblingDirs(t *testing.T) {
 
 func TestSaveThenLoad(t *testing.T) {
 	dir := t.TempDir()
-	in := Config{Roots: []string{"../x"}, TMDBToken: "tok", Language: "es-ES"}
+	in := Config{Roots: []string{"../x"}, TMDBToken: "tok", Language: "es-ES", ImagePrefetch: "posters"}
 	if err := Save(dir, in); err != nil {
 		t.Fatal(err)
 	}
