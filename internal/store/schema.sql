@@ -47,5 +47,7 @@ CREATE TABLE IF NOT EXISTS media (
   height      INTEGER NOT NULL DEFAULT 0,
   video_codec TEXT    NOT NULL DEFAULT '',
   audio       TEXT    NOT NULL DEFAULT '[]', -- JSON []probe.Track
-  subs        TEXT    NOT NULL DEFAULT '[]'  -- JSON []probe.Track
+  subs        TEXT    NOT NULL DEFAULT '[]', -- JSON []probe.Track
+  probe_version INTEGER NOT NULL DEFAULT 0, -- probe.Version that produced the row
+  with_ffprobe  INTEGER NOT NULL DEFAULT 0  -- 1 if the ffprobe fallback was available
 );

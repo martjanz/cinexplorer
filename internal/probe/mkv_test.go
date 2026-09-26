@@ -140,6 +140,15 @@ func TestMKVNegativeDurationIgnored(t *testing.T) {
 	}
 }
 
+func TestMKVAbsurdChannelsIgnored(t *testing.T) {
+	file := append(mkvHeader("matroska"), pt.EBML(mkvSegment,
+		pt.EBML(mkvTracks, track(2, "A_AC3", pt.EBML(mkvAudio, pt.EBMLUint(mkvChannels, 200)))))...)
+	got, err := readMKV(src(file))
+	if err != nil || got.Audio[0].Channels != 0 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
 func TestMKVAbsurdPixelWidthIgnored(t *testing.T) {
 	file := append(mkvHeader("matroska"), pt.EBML(mkvSegment,
 		pt.EBML(mkvTracks, track(1, "V_MPEG4/ISO/AVC",

@@ -39,8 +39,10 @@ type Scanner struct {
 	AppDir string
 	Roots  []string // catalog form
 	Store  *store.Store
-	// Probe reads a file's technical data; nil means probe.Probe.
-	Probe func(ctx context.Context, path string) (probe.Info, error)
+	// Probe reads a file's technical data; nil means probe.Probe, with
+	// ProbeEnv then taken from the probe package.
+	Probe    func(ctx context.Context, path string) (probe.Info, error)
+	ProbeEnv store.ProbeEnv
 
 	mu     sync.Mutex
 	status Status
@@ -207,7 +209,11 @@ const probeBatch = 50
 // failures are left for the next scan; format errors are stored so the file
 // is not read again until it changes. A root that disappears stops the phase.
 func (s *Scanner) probeAll(ctx context.Context, roots []string) error {
-	pending, err := s.Store.PendingProbes()
+	read, env := s.Probe, s.ProbeEnv
+	if read == nil {
+		read, env = probe.Probe, store.ProbeEnv{Version: probe.Version, FFprobe: probe.HasFFprobe()}
+	}
+	pending, err := s.Store.PendingProbes(env)
 	if err != nil {
 		return err
 	}
@@ -220,10 +226,6 @@ func (s *Scanner) probeAll(ctx context.Context, roots []string) error {
 	s.mu.Lock()
 	s.status.ToProbe = len(targets)
 	s.mu.Unlock()
-	read := s.Probe
-	if read == nil {
-		read = probe.Probe
-	}
 
 	var batch []store.ProbeResult
 	flush := func() error {
@@ -247,7 +249,7 @@ func (s *Scanner) probeAll(ctx context.Context, roots []string) error {
 				return errors.Join(fmt.Errorf("la raíz %s desapareció durante el análisis", root), flush())
 			}
 		}
-		r := store.ProbeResult{FileID: t.FileID, Size: t.Size, MTime: t.MTime, Info: info}
+		r := store.ProbeResult{FileID: t.FileID, Size: t.Size, MTime: t.MTime, Info: info, Env: env}
 		switch {
 		case err == nil:
 			batch = append(batch, r)

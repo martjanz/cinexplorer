@@ -29,6 +29,9 @@ var defaultProber = sync.OnceValue(func() Prober {
 	return Prober{FFprobe: path}
 })
 
+// HasFFprobe reports whether Probe can fall back to ffprobe.
+func HasFFprobe() bool { return defaultProber().FFprobe != "" }
+
 // Probe reads path with the default Prober, which uses ffprobe only if it is
 // on the PATH.
 func Probe(ctx context.Context, path string) (Info, error) {

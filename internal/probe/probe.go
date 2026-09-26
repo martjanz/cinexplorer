@@ -40,6 +40,11 @@ func invalid(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, args...))
 }
 
+// Version identifies what the readers know. Bump it when a change should
+// reach files that were already probed: the scanner reads again every file
+// whose stored result comes from an older version.
+const Version = 1
+
 // maxRead caps the bytes a native reader may read from one file, so a
 // malformed file never makes us walk a whole movie on an external drive.
 const maxRead = 16 << 20

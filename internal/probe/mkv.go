@@ -344,6 +344,9 @@ func (s *source) mkvTracks(e ebmlElem, segEnd int64, info *Info) error {
 				*v = 0
 			}
 		}
+		if ch > maxChannels {
+			ch = 0
+		}
 		if ietf != "" {
 			lang = ietf
 		}

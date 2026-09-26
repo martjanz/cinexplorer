@@ -51,7 +51,7 @@ func mediaLibrary(t *testing.T, s *Store) {
 
 func pendingPaths(t *testing.T, s *Store) []string {
 	t.Helper()
-	ts, err := s.PendingProbes()
+	ts, err := s.PendingProbes(ProbeEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestPendingProbes(t *testing.T) {
 		t.Fatalf("pending = %v, want %v", got, want)
 	}
 
-	ts, err := s.PendingProbes()
+	ts, err := s.PendingProbes(ProbeEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestPendingProbes(t *testing.T) {
 func TestSaveProbesUpserts(t *testing.T) {
 	s := open(t)
 	mediaLibrary(t, s)
-	ts, err := s.PendingProbes()
+	ts, err := s.PendingProbes(ProbeEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,10 +137,50 @@ func TestReadOnlyStage1Catalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ro.Close()
-	if ts, err := ro.PendingProbes(); err != nil || len(ts) != 0 {
+	if ts, err := ro.PendingProbes(ProbeEnv{}); err != nil || len(ts) != 0 {
 		t.Fatalf("pending %v, %v", ts, err)
 	}
 	if vs, err := ro.Versions(); err != nil || len(vs) != 4 {
 		t.Fatalf("versions %d, %v", len(vs), err)
+	}
+}
+
+func TestPendingProbesAfterReaderOrFFprobeChange(t *testing.T) {
+	s := open(t)
+	mediaLibrary(t, s)
+	old := ProbeEnv{Version: 1}
+	ts, err := s.PendingProbes(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.SaveProbes([]ProbeResult{
+		{FileID: ts[0].FileID, Size: ts[0].Size, MTime: ts[0].MTime, Info: probe.Info{Height: 1080}, Env: old},
+		{FileID: ts[1].FileID, Size: ts[1].Size, MTime: ts[1].MTime, Err: "probe: unsupported format", Env: old},
+		{FileID: ts[2].FileID, Size: ts[2].Size, MTime: ts[2].MTime, Info: probe.Info{Height: 576}, Env: old},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := func(env ProbeEnv) []string {
+		ts, err := s.PendingProbes(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, x := range ts {
+			out = append(out, x.Path)
+		}
+		return out
+	}
+	if got := pending(old); len(got) != 0 {
+		t.Fatalf("same env: pending %v", got)
+	}
+	// ffprobe installed since: only the failure is worth another try.
+	if got := pending(ProbeEnv{Version: 1, FFprobe: true}); !reflect.DeepEqual(got, []string{"../cine/b/Stalker.avi"}) {
+		t.Fatalf("with ffprobe: pending %v", got)
+	}
+	// Better readers: everything they produced before is read again.
+	if got := pending(ProbeEnv{Version: 2}); len(got) != 3 {
+		t.Fatalf("new version: pending %v", got)
 	}
 }

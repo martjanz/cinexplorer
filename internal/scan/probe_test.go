@@ -11,6 +11,7 @@ import (
 
 	"cinexplorer/internal/probe"
 	"cinexplorer/internal/probe/probetest"
+	"cinexplorer/internal/store"
 )
 
 func TestScanProbesMainVideosOnce(t *testing.T) {
@@ -86,7 +87,7 @@ func TestScanCancelKeepsProbedResults(t *testing.T) {
 	if err := sc.Run(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
-	pending, err := st.PendingProbes()
+	pending, err := st.PendingProbes(store.ProbeEnv{})
 	if err != nil || len(pending) != 2 {
 		t.Fatalf("pending %+v, %v", pending, err)
 	}
@@ -136,7 +137,34 @@ func TestScanStopsWhenRootVanishesDuringProbe(t *testing.T) {
 		t.Fatalf("err = %v after %d calls", err, calls)
 	}
 	// Nothing was stored for the file whose read failed with the drive gone.
-	if pending, _ := st.PendingProbes(); len(pending) != 3 {
+	if pending, _ := st.PendingProbes(store.ProbeEnv{}); len(pending) != 3 {
 		t.Fatalf("pending %d, want 3", len(pending))
+	}
+}
+
+func TestScanProbesAgainWithBetterProber(t *testing.T) {
+	disk, app, st := setup(t)
+	writeFile(t, filepath.Join(disk, "cine", "a", "A.rmvb"), 4096, 'a')
+	calls := 0
+	unsupported := func(context.Context, string) (probe.Info, error) {
+		calls++
+		return probe.Info{}, fmt.Errorf("%w: rmvb", probe.ErrUnsupported)
+	}
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine"}, Store: st, Probe: unsupported,
+		ProbeEnv: store.ProbeEnv{Version: 1}}
+	for range 2 {
+		if err := sc.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("unchanged prober read the file %d times", calls)
+	}
+	sc.ProbeEnv.FFprobe = true // ffprobe installed since the last scan
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("with ffprobe available the failed file was not retried (%d calls)", calls)
 	}
 }
