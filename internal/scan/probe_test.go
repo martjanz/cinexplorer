@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"cinexplorer/internal/probe"
@@ -88,5 +89,54 @@ func TestScanCancelKeepsProbedResults(t *testing.T) {
 	pending, err := st.PendingProbes()
 	if err != nil || len(pending) != 2 {
 		t.Fatalf("pending %+v, %v", pending, err)
+	}
+}
+
+func TestScanSkipsProbesUnderUnavailableRoot(t *testing.T) {
+	disk, app, st := setup(t)
+	writeFile(t, filepath.Join(disk, "cine", "a", "A.mkv"), 4096, 'a')
+	writeFile(t, filepath.Join(disk, "cine-ordenar", "b", "B.mkv"), 4096, 'b')
+	calls := map[string]int{}
+	unreadable := func(ctx context.Context, p string) (probe.Info, error) {
+		calls[filepath.Base(p)]++
+		return probe.Info{}, fmt.Errorf("%w: busy", probe.ErrIO)
+	}
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine", "../cine-ordenar"}, Store: st, Probe: unreadable}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The second drive is unplugged: its never-probed files must not be tried.
+	if err := os.Rename(filepath.Join(disk, "cine-ordenar"), filepath.Join(disk, "elsewhere")); err != nil {
+		t.Fatal(err)
+	}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls["A.mkv"] != 2 || calls["B.mkv"] != 1 || sc.Status().ToProbe != 1 {
+		t.Fatalf("calls %v, status %+v", calls, sc.Status())
+	}
+}
+
+func TestScanStopsWhenRootVanishesDuringProbe(t *testing.T) {
+	disk, app, st := setup(t)
+	for _, n := range []string{"a", "b", "c"} {
+		writeFile(t, filepath.Join(disk, "cine", n, n+".mkv"), 4096, n[0])
+	}
+	calls := 0
+	unplug := func(ctx context.Context, p string) (probe.Info, error) {
+		calls++
+		if err := os.Rename(filepath.Join(disk, "cine"), filepath.Join(disk, "gone")); err != nil {
+			t.Fatal(err)
+		}
+		return probe.Info{}, fmt.Errorf("%w: gone", probe.ErrInvalid) // what ffprobe says of a vanished file
+	}
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine"}, Store: st, Probe: unplug}
+	err := sc.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "desapareció") || calls != 1 {
+		t.Fatalf("err = %v after %d calls", err, calls)
+	}
+	// Nothing was stored for the file whose read failed with the drive gone.
+	if pending, _ := st.PendingProbes(); len(pending) != 3 {
+		t.Fatalf("pending %d, want 3", len(pending))
 	}
 }

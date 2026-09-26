@@ -193,7 +193,9 @@ func (s *Scanner) run(ctx context.Context) error {
 	s.mu.Lock()
 	s.status.Versions = len(versions)
 	s.mu.Unlock()
-	return s.probeAll(ctx)
+	// The catalog is already updated here: an error from the probe phase only
+	// means some files keep their previous (or no) technical data.
+	return s.probeAll(ctx, attempted)
 }
 
 // probeBatch is how many probe results are committed at once, so an
@@ -201,12 +203,19 @@ func (s *Scanner) run(ctx context.Context) error {
 const probeBatch = 50
 
 // probeAll reads the headers of the files that are new or changed since they
-// were last probed. Read failures are left for the next scan; format errors
-// are stored so the file is not read again until it changes.
-func (s *Scanner) probeAll(ctx context.Context) error {
-	targets, err := s.Store.PendingProbes()
+// were last probed, under the roots that were available in this scan. Read
+// failures are left for the next scan; format errors are stored so the file
+// is not read again until it changes. A root that disappears stops the phase.
+func (s *Scanner) probeAll(ctx context.Context, roots []string) error {
+	pending, err := s.Store.PendingProbes()
 	if err != nil {
 		return err
+	}
+	var targets []store.ProbeTarget
+	for _, t := range pending {
+		if rootOf(t.Path, roots) != "" {
+			targets = append(targets, t)
+		}
 	}
 	s.mu.Lock()
 	s.status.ToProbe = len(targets)
@@ -230,6 +239,14 @@ func (s *Scanner) probeAll(ctx context.Context) error {
 			return errors.Join(err, flush())
 		}
 		info, err := read(ctx, appdir.Abs(s.AppDir, t.Path))
+		if err != nil && ctx.Err() == nil {
+			// The failure may only mean the drive went away: then nothing is
+			// known about this file, and the scan stops like the walk does.
+			root := rootOf(t.Path, roots)
+			if _, statErr := os.Stat(appdir.Abs(s.AppDir, root)); statErr != nil {
+				return errors.Join(fmt.Errorf("la raíz %s desapareció durante el análisis", root), flush())
+			}
+		}
 		r := store.ProbeResult{FileID: t.FileID, Size: t.Size, MTime: t.MTime, Info: info}
 		switch {
 		case err == nil:
@@ -252,6 +269,16 @@ func (s *Scanner) probeAll(ctx context.Context) error {
 		}
 	}
 	return flush()
+}
+
+// rootOf returns the root (catalog form) that contains p, or "".
+func rootOf(p string, roots []string) string {
+	for _, r := range roots {
+		if strings.HasPrefix(p, strings.TrimSuffix(r, "/")+"/") {
+			return r
+		}
+	}
+	return ""
 }
 
 func (s *Scanner) add(files, hashed int64) {
