@@ -61,3 +61,24 @@ func TestGroupKey(t *testing.T) {
 		t.Errorf("GroupKey = %q", got)
 	}
 }
+
+func TestNormTitle(t *testing.T) {
+	cases := map[string]string{
+		"El Ángel Exterminador":          "angel exterminador",
+		"The Good, the Bad and the Ugly": "good the bad and the ugly",
+		"The":                            "the",
+		"8½":                             "8",
+		"":                               "",
+	}
+	for in, want := range cases {
+		if got := NormTitle(in); got != want {
+			t.Errorf("NormTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := NormTitle("Łódź Żółć Ščř"); got != "lodz zolc scr" {
+		t.Errorf("NormTitle = %q", got)
+	}
+	if got := Words("Wong Kar-wai"); len(got) != 3 || got[2] != "wai" {
+		t.Errorf("Words = %q", got)
+	}
+}

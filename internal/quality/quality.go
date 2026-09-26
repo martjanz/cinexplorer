@@ -52,20 +52,35 @@ var folds = strings.NewReplacer(
 	"ó", "o", "ò", "o", "ö", "o", "ô", "o", "õ", "o", "ø", "o",
 	"ú", "u", "ù", "u", "ü", "u", "û", "u",
 	"ñ", "n", "ç", "c", "æ", "ae", "œ", "oe", "ß", "ss",
+	"ą", "a", "ę", "e", "ı", "i", "ý", "y", "ÿ", "y",
+	"ć", "c", "č", "c", "ď", "d", "đ", "d", "ğ", "g", "ł", "l", "ń", "n", "ň", "n",
+	"ř", "r", "ś", "s", "š", "s", "ş", "s", "ť", "t", "ź", "z", "ż", "z", "ž", "z",
 )
 
-// GroupKey returns the provisional identity of a movie: its title folded to
-// lowercase ASCII words without a leading article, plus the year. Versions
-// with the same key are treated as the same movie until TMDB ids exist. An
-// empty title yields "", which never groups.
-func GroupKey(title string, year int) string {
-	s := folds.Replace(strings.ToLower(title))
-	words := strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+// Words folds s to lowercase ASCII-ish words: accents removed, split on
+// anything that is not a letter or digit.
+func Words(s string) []string {
+	s = folds.Replace(strings.ToLower(s))
+	return strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+}
+
+// NormTitle is a title reduced for comparison: folded words without a
+// leading article, joined by single spaces. A lone article is kept.
+func NormTitle(title string) string {
+	words := Words(title)
 	if len(words) > 1 && articles[words[0]] {
 		words = words[1:]
 	}
-	if len(words) == 0 {
+	return strings.Join(words, " ")
+}
+
+// GroupKey returns the provisional identity of a movie: its normalized title
+// plus the year. Versions with the same key are treated as the same movie
+// when they have no TMDB id. An empty title yields "", which never groups.
+func GroupKey(title string, year int) string {
+	t := NormTitle(title)
+	if t == "" {
 		return ""
 	}
-	return strings.Join(words, " ") + "|" + strconv.Itoa(year)
+	return t + "|" + strconv.Itoa(year)
 }
