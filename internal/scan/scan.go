@@ -134,7 +134,9 @@ func (s *Scanner) run(ctx context.Context) error {
 			row := store.FileRow{Path: rel, Size: info.Size(), MTime: info.ModTime().UnixMilli(), Kind: string(kind)}
 			known_, wasKnown := known[rel]
 			hashed := int64(0)
-			if wasKnown && known_.Size == row.Size && known_.MTime == row.MTime && (known_.Fingerprint != "" || !kind.Fingerprinted()) {
+			// Empty files are fingerprinted again: catalogs made before
+			// fingerprint.Of skipped them hold a shared, meaningless one.
+			if wasKnown && row.Size > 0 && known_.Size == row.Size && known_.MTime == row.MTime && (known_.Fingerprint != "" || !kind.Fingerprinted()) {
 				row.Fingerprint = known_.Fingerprint
 			} else if kind.Fingerprinted() {
 				fp, err := fingerprint.Of(p)

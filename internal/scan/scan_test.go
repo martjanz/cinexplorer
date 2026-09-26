@@ -287,3 +287,27 @@ func TestScanIsolatesPartiallyUnreadableRoot(t *testing.T) {
 		t.Fatalf("unaffected file under the same root was impacted: ok=%v %+v", ok, row)
 	}
 }
+
+func TestScanForgetsFingerprintOfEmptyFiles(t *testing.T) {
+	disk, app, st := setup(t)
+	writeFile(t, filepath.Join(disk, "cine", "A", "a.avi"), 0, 0)
+	writeFile(t, filepath.Join(disk, "cine", "B", "b.avi"), 0, 0)
+	// An older catalog gave both the same fingerprint.
+	info, _ := os.Stat(filepath.Join(disk, "cine", "A", "a.avi"))
+	infoB, _ := os.Stat(filepath.Join(disk, "cine", "B", "b.avi"))
+	st.SyncFiles([]store.FileRow{
+		{Path: "../cine/A/a.avi", Size: 0, MTime: info.ModTime().UnixMilli(), Fingerprint: "e3b0", Kind: "video"},
+		{Path: "../cine/B/b.avi", Size: 0, MTime: infoB.ModTime().UnixMilli(), Fingerprint: "e3b0", Kind: "video"},
+	}, []string{"../cine"})
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine"}, Store: st}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	idx, _ := st.FileIndex()
+	if idx["../cine/A/a.avi"].Fingerprint != "" || idx["../cine/B/b.avi"].Fingerprint != "" {
+		t.Fatalf("index %+v", idx)
+	}
+	if d, _ := st.Duplicates(); len(d) != 0 {
+		t.Fatalf("empty files reported as copies: %+v", d)
+	}
+}

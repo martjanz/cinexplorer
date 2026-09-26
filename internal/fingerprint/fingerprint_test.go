@@ -61,3 +61,13 @@ func TestMissingFile(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestEmptyFileHasNoFingerprint(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "empty.avi")
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if fp, err := Of(p); err != nil || fp != "" {
+		t.Fatalf("got %q, %v", fp, err)
+	}
+}

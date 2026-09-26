@@ -12,7 +12,9 @@ import (
 const chunk = 1 << 20
 
 // Of hashes the first and last MiB plus the file size. Identical files always
-// match, and a moved or renamed file keeps its fingerprint.
+// match, and a moved or renamed file keeps its fingerprint. An empty file
+// (a failed copy, a placeholder) has no content to recognize: its
+// fingerprint is "".
 func Of(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -24,6 +26,9 @@ func Of(path string) (string, error) {
 		return "", err
 	}
 	size := st.Size()
+	if size == 0 {
+		return "", nil
+	}
 	h := sha256.New()
 	if size <= 2*chunk {
 		if _, err := io.Copy(h, f); err != nil {
