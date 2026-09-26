@@ -126,7 +126,8 @@ func tmdbError(w http.ResponseWriter, err error) {
 
 // image serves /img/{poster|backdrop}/{tmdbId}.jpg from the cache,
 // downloading it once when missing. A candidate that is not a stored movie
-// yet passes its TMDB path as ?p=.
+// yet passes its TMDB path as ?p=. Pages add the image's version as ?v= so
+// that browsers can keep it for good.
 func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 	kind := images.Kind(r.PathValue("kind"))
 	idText, ok := strings.CutSuffix(r.PathValue("file"), ".jpg")
@@ -141,21 +142,27 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b []byte
+	cache := "no-cache"
 	if found {
 		path := m.PosterPath
 		if kind == images.Backdrop {
 			path = m.BackdropPath
 		}
 		b, err = s.Images.Get(r.Context(), kind, id, path)
+		// ?v= names the image at one path: the URL changes with the path.
+		if v := r.URL.Query().Get("v"); v != "" && v == images.Version(path) {
+			cache = "public, max-age=31536000, immutable"
+		}
 	} else {
 		// ?p= comes from the page (any page can send it): shown, never cached.
 		b, err = s.Images.Preview(r.Context(), kind, id, r.URL.Query().Get("p"))
+		cache = "max-age=86400"
 	}
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", http.DetectContentType(b))
-	w.Header().Set("Cache-Control", "max-age=86400")
+	w.Header().Set("Cache-Control", cache)
 	w.Write(b)
 }

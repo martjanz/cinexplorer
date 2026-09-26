@@ -139,7 +139,7 @@ func TestImageEndpoint(t *testing.T) {
 	if b := body("/img/poster/7857.jpg?p=/other.jpg"); !strings.HasSuffix(b, "/other.jpg") {
 		t.Fatalf("candidate poster %q", b)
 	}
-	if s.Images.Has(images.Poster, 7857) {
+	if s.Images.Has(images.Poster, 7857, "/other.jpg") {
 		t.Fatal("candidate preview was cached")
 	}
 	s.Identifier.Adopt(context.Background(), 7857)
@@ -155,6 +155,18 @@ func TestImageEndpoint(t *testing.T) {
 	rec := request(s.Handler(), "GET", "/img/poster/7857.jpg", "", "", "127.0.0.1")
 	if rec.Header().Get("Content-Type") != "image/jpeg" {
 		t.Fatalf("content type %q", rec.Header().Get("Content-Type"))
+	}
+	// With the current version the URL names one image for good; without it
+	// (or with an old one) the browser has to ask again.
+	for url, want := range map[string]string{
+		"/img/poster/7857.jpg?v=p":      "public, max-age=31536000, immutable",
+		"/img/poster/7857.jpg?v=old":    "no-cache",
+		"/img/poster/7857.jpg":          "no-cache",
+		"/img/poster/7857.jpg?p=/x.jpg": "no-cache",
+	} {
+		if got := request(s.Handler(), "GET", url, "", "", "127.0.0.1").Header().Get("Cache-Control"); got != want {
+			t.Errorf("%s: Cache-Control %q, want %q", url, got, want)
+		}
 	}
 	for _, bad := range []string{"/img/thumb/7857.jpg", "/img/poster/abc.jpg", "/img/poster/7857.png", "/img/poster/1.jpg",
 		"/img/poster/2.jpg?p=../../etc/passwd"} {

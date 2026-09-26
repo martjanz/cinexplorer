@@ -403,7 +403,7 @@ func (r *Runner) prefetchAll(ctx context.Context) error {
 			wanted = append(wanted, imageRef{images.Backdrop, m.BackdropPath})
 		}
 		for _, w := range wanted {
-			if w.path == "" || r.Images.Has(w.kind, m.TMDBID) {
+			if w.path == "" || r.Images.Has(w.kind, m.TMDBID, w.path) {
 				continue
 			}
 			if err := ctx.Err(); err != nil {
