@@ -52,7 +52,7 @@ Todos los lectores trabajan sobre `io.ReaderAt` + tamaño, leen solo encabezados
 ### 3.1 Lectores
 
 - **MKV** (`mkv.go`): EBML header (DocType `matroska`/`webm`) → Segment → `SeekHead` (para saltar a `Info`/`Tracks` si no están al principio), `Info` (`TimecodeScale`, `Duration` float), `Tracks/TrackEntry` (`TrackType`, `CodecID`, `Language`, `LanguageIETF` con prioridad, `Video/PixelWidth|PixelHeight`, `Audio/Channels`). Idioma por defecto `eng` y canales por defecto 1 según la especificación Matroska cuando faltan; `und` → "". Un Segment que declara más bytes que el archivo (descarga incompleta) se recorta al tamaño real. Para AAC, los canales salen del AudioSpecificConfig en `CodecPrivate`.
-- **MP4** (`mp4.go`): recorre cajas de nivel superior saltando `mdat`; `moov/mvhd` (duración/timescale, versión 0 y 1), por `trak`: `tkhd` (ancho/alto 16.16), `mdia/hdlr` (`vide`, `soun`, `sbtl`, `text`, `subp`, `clcp`), `mdia/mdhd` (idioma ISO-639-2 empaquetado, `und` → ""), `minf/stbl/stsd` (fourcc de la primera entrada; canales de la entrada de audio). Soporta cajas de tamaño 64 bits y tamaño 0 (hasta fin de archivo). El `hdlr` válido es el de `mdia` (QuickTime agrega otro de referencia de datos dentro de `minf`). Los canales de `stsd` suelen decir 2: para AAC se leen del AudioSpecificConfig (`esds`) y para AC3 de `dac3`. `mp4a` con objectType MP3 → `mp3`. Las pistas de texto referenciadas como capítulos (`tref/chap`) no cuentan como subtítulos.
+- **MP4** (`mp4.go`): recorre cajas de nivel superior saltando `mdat`; `moov/mvhd` (duración/timescale, versión 0 y 1), por `trak`: `tkhd` (id de pista), `mdia/hdlr` (`vide`, `soun`, `sbtl`, `text`, `subt`, `subp`, `clcp`), `mdia/mdhd` (idioma ISO-639-2 empaquetado, `und` → ""), `minf/stbl/stsd` (fourcc de la primera entrada; ancho/alto codificados de la entrada de video; canales de la entrada de audio). Soporta cajas de tamaño 64 bits y tamaño 0 (hasta fin de archivo). El `hdlr` válido es el de `mdia` (QuickTime agrega otro de referencia de datos dentro de `minf`). Los canales de `stsd` suelen decir 2: para AAC se leen del AudioSpecificConfig (`esds`) y para AC3 de `dac3`. `mp4a` con objectType MP3 → `mp3`. Las pistas de texto referenciadas como capítulos (`tref/chap`) no cuentan como subtítulos.
 - **AVI** (`avi.go`): `RIFF AVI ` → `LIST hdrl` → `avih` (µs por frame, frames totales, ancho, alto) → `LIST strl` por stream: `strh` (`vids`/`auds`, handler, scale, rate, length), `strf` (`biCompression` de `BITMAPINFOHEADER`; `wFormatTag` y `nChannels` de `WAVEFORMATEX`). Duración: `length × scale / rate` del stream de video; si no hay rate, frames × µs/frame tomando los frames de OpenDML (`LIST odml/dmlh`) con prioridad sobre `avih` (que en OpenDML cuenta solo el primer RIFF). Los streams `txts` se ignoran. Idioma de audio: "" (AVI no lo declara de forma estándar). Canales: para AAC se leen del AudioSpecificConfig en los bytes extra de `WAVEFORMATEX`; para AC3/DTS un `nChannels` de 5 se toma como 5.1 (los muxers omiten el LFE).
 - **IFO** (`ifo.go`): firma `DVDVIDEO-VTS`; atributos de video en 0x200 (norma NTSC/PAL → 720×480 / 720×576, codec `mpeg2` o `mpeg1`), audio: cantidad en 0x202 y atributos de 8 bytes desde 0x204 (modo de codificación, código de idioma, canales), subpicture: cantidad en 0x254 y atributos de 6 bytes desde 0x256 (idioma). Duración: tiempo de reproducción BCD de la PGC más larga de `VTS_PGCIT` (sector en 0xCC). Para una versión DVD se analizan todos sus `VTS_xx_0.IFO` y gana el de mayor duración.
 - **ffprobe** (`ffprobe.go`): `ffprobe -v error -print_format json -show_format -show_streams -i <archivo>`; mapea `codec_type`, `codec_name`, `width`, `height`, `channels`, `tags.language`, `format.duration`, `format.format_name` (normalizado: `matroska,webm` → `matroska`, `mov,mp4,…` → `mp4`, si no el primer nombre). Se omiten las portadas (`attached_pic`). Si `exec.LookPath` falla (incluido `exec.ErrDot`), no hay fallback.
@@ -97,14 +97,16 @@ CREATE TABLE IF NOT EXISTS media (
   height      INTEGER NOT NULL DEFAULT 0,
   video_codec TEXT    NOT NULL DEFAULT '',
   audio       TEXT    NOT NULL DEFAULT '[]',  -- JSON []Track
-  subs        TEXT    NOT NULL DEFAULT '[]'   -- JSON []Track
+  subs        TEXT    NOT NULL DEFAULT '[]',  -- JSON []Track
+  probe_version INTEGER NOT NULL DEFAULT 0,   -- probe.Version que produjo la fila
+  with_ffprobe  INTEGER NOT NULL DEFAULT 0    -- 1 si el fallback ffprobe estaba disponible
 );
 ```
 
 `CREATE TABLE IF NOT EXISTS` basta como migración: un catálogo de la Etapa 1 gana la tabla vacía al abrirse y el siguiente escaneo la llena.
 
 Store:
-- `PendingProbes() ([]ProbeTarget, error)`: archivos presentes con `role = 'main'` de kind `video`, más los `VTS_\d\d_0.IFO` de versiones DVD, que no tienen fila en `media` o cuyo `size`/`mtime` difiere del archivo.
+- `PendingProbes(env ProbeEnv) ([]ProbeTarget, error)`: archivos presentes con `role = 'main'` de kind `video`, más los `VTS_\d\d_0.IFO` de versiones DVD, que no tienen fila en `media`, cuyo `size`/`mtime` difiere del archivo, cuya fila la produjo una versión anterior de los lectores (`probe_version < probe.Version`), o que fallaron sin fallback cuando ahora `ffprobe` está disponible. Así una mejora de los lectores o instalar `ffprobe` llega a lo ya analizado sin borrar el catálogo.
 - `SaveProbes([]ProbeResult) error`: upsert por lote en una transacción.
 
 ## 5. Pipeline
