@@ -21,11 +21,11 @@ type mediaRow struct {
 // attachMedia fills the technical fields of each version from the probe
 // results of its present main files. Stale results (the file changed since)
 // and failed ones are ignored, so the name-parsed values remain.
-func (s *Store) attachMedia(out []VersionView, pos map[int64]int) error {
+func (s *Store) attachMedia(tx querier, out []VersionView, pos map[int64]int) error {
 	if !s.hasMedia {
 		return nil
 	}
-	rows, err := s.db.Query(`SELECT f.version_id, f.kind, m.duration_ms, m.width, m.height, m.video_codec, m.audio, m.subs
+	rows, err := tx.Query(`SELECT f.version_id, f.kind, m.duration_ms, m.width, m.height, m.video_codec, m.audio, m.subs
 		FROM files f JOIN media m ON m.file_id = f.id
 		WHERE f.version_id IS NOT NULL AND f.role = 'main' AND f.missing = 0 AND m.error = ''
 		  AND m.size = f.size AND m.mtime = f.mtime

@@ -304,11 +304,15 @@ type UnidentifiedView struct {
 // Unidentified returns the unmatched versions with their candidates, one per
 // fingerprint.
 func (s *Store) Unidentified() ([]UnidentifiedView, error) {
-	vs, err := s.Versions()
-	if err != nil {
-		return nil, err
-	}
-	ids, err := s.identifications(s.db)
+	var vs []VersionView
+	var ids map[string]*Identification
+	err := s.read(func(tx querier) (err error) {
+		if vs, err = s.versions(tx); err != nil {
+			return err
+		}
+		ids, err = s.identifications(tx)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -330,8 +334,8 @@ func (s *Store) Unidentified() ([]UnidentifiedView, error) {
 }
 
 // attachIdentity fills Fingerprint, Identification and Movie of each version.
-func (s *Store) attachIdentity(out []VersionView, pos map[int64]int) error {
-	reps, err := s.representatives(s.db)
+func (s *Store) attachIdentity(tx querier, out []VersionView, pos map[int64]int) error {
+	reps, err := s.representatives(tx)
 	if err != nil {
 		return err
 	}
@@ -343,12 +347,12 @@ func (s *Store) attachIdentity(out []VersionView, pos map[int64]int) error {
 	if !s.hasIdentity {
 		return nil
 	}
-	ids, err := s.identifications(s.db)
+	ids, err := s.identifications(tx)
 	if err != nil {
 		return err
 	}
 	refs := map[int]*MovieRef{}
-	rows, err := s.db.Query(`SELECT tmdb_id, title, original_title, year, directors FROM movies`)
+	rows, err := tx.Query(`SELECT tmdb_id, title, original_title, year, directors FROM movies`)
 	if err != nil {
 		return err
 	}

@@ -268,10 +268,19 @@ func (s *Store) ReplaceVersions(vs []grouping.Version) error {
 	return tx.Commit()
 }
 
-// Versions returns every version with its files and technical data, ordered
-// by title and year.
+// Versions returns every version with its files, technical data and
+// identity, ordered by title and year.
 func (s *Store) Versions() ([]VersionView, error) {
-	rows, err := s.db.Query(`SELECT id, dir, title, year, director, countries, resolution, source, codec, language,
+	var vs []VersionView
+	err := s.read(func(tx querier) (err error) {
+		vs, err = s.versions(tx)
+		return err
+	})
+	return vs, err
+}
+
+func (s *Store) versions(tx querier) ([]VersionView, error) {
+	rows, err := tx.Query(`SELECT id, dir, title, year, director, countries, resolution, source, codec, language,
 		size, parts, sub_langs FROM versions ORDER BY title COLLATE NOCASE, year, id`)
 	if err != nil {
 		return nil, err
@@ -294,7 +303,7 @@ func (s *Store) Versions() ([]VersionView, error) {
 		return nil, err
 	}
 
-	frows, err := s.db.Query(`SELECT version_id, path, role, part, lang, missing FROM files
+	frows, err := tx.Query(`SELECT version_id, path, role, part, lang, missing FROM files
 		WHERE version_id IS NOT NULL
 		ORDER BY version_id, CASE role WHEN 'main' THEN 0 WHEN 'subtitle' THEN 1 ELSE 2 END, part, path`)
 	if err != nil {
@@ -314,10 +323,10 @@ func (s *Store) Versions() ([]VersionView, error) {
 	if err := frows.Err(); err != nil {
 		return nil, err
 	}
-	if err := s.attachMedia(out, pos); err != nil {
+	if err := s.attachMedia(tx, out, pos); err != nil {
 		return nil, err
 	}
-	if err := s.attachIdentity(out, pos); err != nil {
+	if err := s.attachIdentity(tx, out, pos); err != nil {
 		return nil, err
 	}
 	markBest(out)

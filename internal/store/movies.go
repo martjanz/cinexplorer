@@ -111,16 +111,16 @@ func (s *Store) Movies() ([]Movie, error) {
 	if !s.hasIdentity {
 		return nil, nil
 	}
-	return s.queryMovies(`SELECT ` + movieColumns + ` FROM movies ORDER BY tmdb_id`)
+	return s.queryMovies(s.db, `SELECT `+movieColumns+` FROM movies ORDER BY tmdb_id`)
 }
 
 // PendingWikidata returns up to limit movies not looked up in Wikidata yet.
 func (s *Store) PendingWikidata(limit int) ([]Movie, error) {
-	return s.queryMovies(`SELECT `+movieColumns+` FROM movies WHERE wikidata_state = 0 ORDER BY tmdb_id LIMIT ?`, limit)
+	return s.queryMovies(s.db, `SELECT `+movieColumns+` FROM movies WHERE wikidata_state = 0 ORDER BY tmdb_id LIMIT ?`, limit)
 }
 
-func (s *Store) queryMovies(q string, args ...any) ([]Movie, error) {
-	rows, err := s.db.Query(q, args...)
+func (s *Store) queryMovies(tx querier, q string, args ...any) ([]Movie, error) {
+	rows, err := tx.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
