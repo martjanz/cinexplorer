@@ -4084,6 +4084,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"cinexplorer/internal/probe"
@@ -4168,6 +4169,55 @@ func TestScanCancelKeepsProbedResults(t *testing.T) {
 		t.Fatalf("pending %+v, %v", pending, err)
 	}
 }
+
+func TestScanSkipsProbesUnderUnavailableRoot(t *testing.T) {
+	disk, app, st := setup(t)
+	writeFile(t, filepath.Join(disk, "cine", "a", "A.mkv"), 4096, 'a')
+	writeFile(t, filepath.Join(disk, "cine-ordenar", "b", "B.mkv"), 4096, 'b')
+	calls := map[string]int{}
+	unreadable := func(ctx context.Context, p string) (probe.Info, error) {
+		calls[filepath.Base(p)]++
+		return probe.Info{}, fmt.Errorf("%w: busy", probe.ErrIO)
+	}
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine", "../cine-ordenar"}, Store: st, Probe: unreadable}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The second drive is unplugged: its never-probed files must not be tried.
+	if err := os.Rename(filepath.Join(disk, "cine-ordenar"), filepath.Join(disk, "elsewhere")); err != nil {
+		t.Fatal(err)
+	}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls["A.mkv"] != 2 || calls["B.mkv"] != 1 || sc.Status().ToProbe != 1 {
+		t.Fatalf("calls %v, status %+v", calls, sc.Status())
+	}
+}
+
+func TestScanStopsWhenRootVanishesDuringProbe(t *testing.T) {
+	disk, app, st := setup(t)
+	for _, n := range []string{"a", "b", "c"} {
+		writeFile(t, filepath.Join(disk, "cine", n, n+".mkv"), 4096, n[0])
+	}
+	calls := 0
+	unplug := func(ctx context.Context, p string) (probe.Info, error) {
+		calls++
+		if err := os.Rename(filepath.Join(disk, "cine"), filepath.Join(disk, "gone")); err != nil {
+			t.Fatal(err)
+		}
+		return probe.Info{}, fmt.Errorf("%w: gone", probe.ErrInvalid) // what ffprobe says of a vanished file
+	}
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine"}, Store: st, Probe: unplug}
+	err := sc.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "desapareció") || calls != 1 {
+		t.Fatalf("err = %v after %d calls", err, calls)
+	}
+	// Nothing was stored for the file whose read failed with the drive gone.
+	if pending, _ := st.PendingProbes(); len(pending) != 3 {
+		t.Fatalf("pending %d, want 3", len(pending))
+	}
+}
 ```
 
 - [ ] **Step 2: Verificar que falla**
@@ -4204,7 +4254,15 @@ En `internal/scan/scan.go`:
 	Probe func(ctx context.Context, path string) (probe.Info, error)
 ```
 
-4. Al final de `run`, reemplazar `return nil` (el que sigue a `s.status.Versions = len(versions)`) por `return s.probeAll(ctx)` y agregar después de `run`:
+4. Al final de `run`, reemplazar `return nil` (el que sigue a `s.status.Versions = len(versions)`) por:
+
+```go
+	// The catalog is already updated here: an error from the probe phase only
+	// means some files keep their previous (or no) technical data.
+	return s.probeAll(ctx, attempted)
+```
+
+y agregar después de `run` (solo se analizan archivos de raíces disponibles en este escaneo; si una lectura falla y la raíz ya no está, el escaneo se corta como en el recorrido y ese resultado no se guarda):
 
 ```go
 // probeBatch is how many probe results are committed at once, so an
@@ -4212,12 +4270,19 @@ En `internal/scan/scan.go`:
 const probeBatch = 50
 
 // probeAll reads the headers of the files that are new or changed since they
-// were last probed. Read failures are left for the next scan; format errors
-// are stored so the file is not read again until it changes.
-func (s *Scanner) probeAll(ctx context.Context) error {
-	targets, err := s.Store.PendingProbes()
+// were last probed, under the roots that were available in this scan. Read
+// failures are left for the next scan; format errors are stored so the file
+// is not read again until it changes. A root that disappears stops the phase.
+func (s *Scanner) probeAll(ctx context.Context, roots []string) error {
+	pending, err := s.Store.PendingProbes()
 	if err != nil {
 		return err
+	}
+	var targets []store.ProbeTarget
+	for _, t := range pending {
+		if rootOf(t.Path, roots) != "" {
+			targets = append(targets, t)
+		}
 	}
 	s.mu.Lock()
 	s.status.ToProbe = len(targets)
@@ -4241,6 +4306,14 @@ func (s *Scanner) probeAll(ctx context.Context) error {
 			return errors.Join(err, flush())
 		}
 		info, err := read(ctx, appdir.Abs(s.AppDir, t.Path))
+		if err != nil && ctx.Err() == nil {
+			// The failure may only mean the drive went away: then nothing is
+			// known about this file, and the scan stops like the walk does.
+			root := rootOf(t.Path, roots)
+			if _, statErr := os.Stat(appdir.Abs(s.AppDir, root)); statErr != nil {
+				return errors.Join(fmt.Errorf("la raíz %s desapareció durante el análisis", root), flush())
+			}
+		}
 		r := store.ProbeResult{FileID: t.FileID, Size: t.Size, MTime: t.MTime, Info: info}
 		switch {
 		case err == nil:
@@ -4266,10 +4339,24 @@ func (s *Scanner) probeAll(ctx context.Context) error {
 }
 ```
 
+(`rootOf` es un helper nuevo junto a `add`; `strings` y `os` ya están importados.)
+
+```go
+// rootOf returns the root (catalog form) that contains p, or "".
+func rootOf(p string, roots []string) string {
+	for _, r := range roots {
+		if strings.HasPrefix(p, strings.TrimSuffix(r, "/")+"/") {
+			return r
+		}
+	}
+	return ""
+}
+```
+
 - [ ] **Step 4: Verificar que pasa**
 
 Run: `go vet ./internal/scan/ && go test ./internal/scan/ -v`
-Expected: PASS (los tests existentes + los 3 nuevos). Los tests viejos escriben archivos de relleno: el análisis los marca con error de formato (o los manda a `ffprobe` si está instalado, que también falla) y el escaneo termina igual.
+Expected: PASS (los tests existentes + los 5 nuevos). Los tests viejos escriben archivos de relleno: el análisis los marca con error de formato (o los manda a `ffprobe` si está instalado, que también falla) y el escaneo termina igual.
 
 - [ ] **Step 5: Commit**
 
