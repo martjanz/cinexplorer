@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strconv"
 
 	"cinexplorer/internal/probe"
 	"cinexplorer/internal/quality"
@@ -108,14 +109,18 @@ func appendUnique(dst, src []probe.Track) []probe.Track {
 }
 
 // markBest flags the best version in each group of two or more present
-// versions that share a provisional identity (title + year). Full ties go to
-// the lowest id, so the choice is stable.
+// versions of the same movie: the same TMDB id when identified, else the
+// same provisional identity (title + year). Full ties go to the lowest id,
+// so the choice is stable. It must see every version, not a filtered subset.
 func markBest(vs []VersionView) {
 	best := map[string]int{}
 	count := map[string]int{}
 	for i := range vs {
 		v := &vs[i]
 		key := quality.GroupKey(v.Title, v.Year)
+		if v.Movie != nil {
+			key = "tmdb:" + strconv.Itoa(v.Movie.TMDBID)
+		}
 		if key == "" || !hasPresentMain(v) {
 			continue
 		}

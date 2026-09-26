@@ -18,9 +18,11 @@ var schema string
 
 type Store struct {
 	db *sql.DB
-	// hasMedia is false for a stage-1 catalog opened read-only: the schema
-	// only runs on writable opens, so the media table may not exist.
-	hasMedia bool
+	// hasMedia and hasIdentity are false for an older catalog opened
+	// read-only: the schema only runs on writable opens, so the tables of
+	// later stages may not exist.
+	hasMedia    bool
+	hasIdentity bool
 }
 
 type FileRow struct {
@@ -64,6 +66,27 @@ type VersionView struct {
 	Audio      []probe.Track `json:"audio"`
 	Subs       []probe.Track `json:"subs"` // embedded subtitle tracks
 	Best       bool          `json:"best"` // best of several versions of the same movie
+
+	// Identity: Fingerprint is the representative main file's ("" when none
+	// is present and hashed). Movie is set for versions identified as a
+	// stored movie.
+	Fingerprint    string     `json:"fingerprint"`
+	Identification *IdentView `json:"identification"`
+	Movie          *MovieRef  `json:"movie"`
+}
+
+type IdentView struct {
+	Status     string  `json:"status"`
+	Confidence float64 `json:"confidence"`
+	TMDBID     int     `json:"tmdbId"` // the movie, or the movie it is an extra of
+}
+
+type MovieRef struct {
+	TMDBID        int      `json:"tmdbId"`
+	Title         string   `json:"title"`
+	OriginalTitle string   `json:"originalTitle"`
+	Year          int      `json:"year"`
+	Directors     []Person `json:"directors"`
 }
 
 type Duplicate struct {
@@ -102,9 +125,11 @@ func openDB(dsn string, migrate bool) (*Store, error) {
 		}
 	}
 	s := &Store{db: db}
-	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'media'`).Scan(&s.hasMedia); err != nil {
-		db.Close()
-		return nil, err
+	for name, dst := range map[string]*bool{"media": &s.hasMedia, "identifications": &s.hasIdentity} {
+		if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(dst); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -290,6 +315,9 @@ func (s *Store) Versions() ([]VersionView, error) {
 		return nil, err
 	}
 	if err := s.attachMedia(out, pos); err != nil {
+		return nil, err
+	}
+	if err := s.attachIdentity(out, pos); err != nil {
 		return nil, err
 	}
 	markBest(out)
