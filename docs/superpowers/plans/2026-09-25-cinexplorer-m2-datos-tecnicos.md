@@ -3339,10 +3339,11 @@ git commit -m "feat(quality): rank versions and provisional movie identity"
 
 **Files:**
 - Modify: `internal/store/schema.sql` (agregar al final)
+- Modify: `internal/store/store.go` (`Store.hasMedia`)
 - Create: `internal/store/media.go`
 - Test: `internal/store/media_test.go`
 
-`CREATE TABLE IF NOT EXISTS` alcanza como migración: un catálogo de la Etapa 1 gana la tabla vacía al abrirse (`openDB` ya ejecuta el esquema completo) y el próximo escaneo la llena.
+`CREATE TABLE IF NOT EXISTS` alcanza como migración: un catálogo de la Etapa 1 gana la tabla vacía al abrirse con escritura (`openDB` ejecuta el esquema completo) y el próximo escaneo la llena. En modo consulta (solo lectura) el esquema no se ejecuta, así que un catálogo de la Etapa 1 puede no tener `media`: `Store` lo registra al abrir (`hasMedia`) y las consultas técnicas devuelven vacío en ese caso.
 
 - [ ] **Step 1: Test que falla**
 
@@ -3352,6 +3353,7 @@ git commit -m "feat(quality): rank versions and provisional movie identity"
 package store
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -3420,8 +3422,11 @@ func TestPendingProbes(t *testing.T) {
 		t.Fatalf("pending = %v, want %v", got, want)
 	}
 
-	ts, _ := s.PendingProbes()
-	err := s.SaveProbes([]ProbeResult{
+	ts, err := s.PendingProbes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.SaveProbes([]ProbeResult{
 		{FileID: ts[0].FileID, Size: ts[0].Size, MTime: ts[0].MTime, Info: probe.Info{Height: 1080}},
 		{FileID: ts[1].FileID, Size: ts[1].Size, MTime: ts[1].MTime, Err: "probe: invalid header: truncated file"},
 	})
@@ -3444,7 +3449,10 @@ func TestPendingProbes(t *testing.T) {
 func TestSaveProbesUpserts(t *testing.T) {
 	s := open(t)
 	mediaLibrary(t, s)
-	ts, _ := s.PendingProbes()
+	ts, err := s.PendingProbes()
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := ProbeResult{FileID: ts[0].FileID, Size: 100, MTime: 1, Info: probe.Info{Height: 720}}
 	if err := s.SaveProbes([]ProbeResult{r}); err != nil {
 		t.Fatal(err)
@@ -3454,9 +3462,38 @@ func TestSaveProbesUpserts(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n, h int
-	s.db.QueryRow(`SELECT COUNT(*), MAX(height) FROM media`).Scan(&n, &h)
+	if err := s.db.QueryRow(`SELECT COUNT(*), MAX(height) FROM media`).Scan(&n, &h); err != nil {
+		t.Fatal(err)
+	}
 	if n != 1 || h != 1080 {
 		t.Fatalf("rows=%d height=%d", n, h)
+	}
+}
+
+func TestReadOnlyStage1Catalog(t *testing.T) {
+	// A catalog written by stage 1 has no media table, and a read-only open
+	// does not run the schema: listing versions must still work.
+	path := filepath.Join(t.TempDir(), "cinexplorer.db")
+	s, err := Open(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaLibrary(t, s)
+	if _, err := s.db.Exec(`DROP TABLE media`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	ro, err := Open(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	if ts, err := ro.PendingProbes(); err != nil || len(ts) != 0 {
+		t.Fatalf("pending %v, %v", ts, err)
+	}
+	if vs, err := ro.Versions(); err != nil || len(vs) != 4 {
+		t.Fatalf("versions %d, %v", len(vs), err)
 	}
 }
 ```
@@ -3487,6 +3524,28 @@ CREATE TABLE IF NOT EXISTS media (
   audio       TEXT    NOT NULL DEFAULT '[]', -- JSON []probe.Track
   subs        TEXT    NOT NULL DEFAULT '[]'  -- JSON []probe.Track
 );
+```
+
+En `internal/store/store.go`, reemplazar el struct `Store` por:
+
+```go
+type Store struct {
+	db *sql.DB
+	// hasMedia is false for a stage-1 catalog opened read-only: the schema
+	// only runs on writable opens, so the media table may not exist.
+	hasMedia bool
+}
+```
+
+y el final de `openDB` (`return &Store{db: db}, nil`) por:
+
+```go
+	s := &Store{db: db}
+	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'media'`).Scan(&s.hasMedia); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
 ```
 
 `internal/store/media.go`:
@@ -3522,6 +3581,9 @@ type ProbeResult struct {
 // PendingProbes returns the present main video files, and the title set IFOs
 // of DVD versions, that have never been probed or changed since.
 func (s *Store) PendingProbes() ([]ProbeTarget, error) {
+	if !s.hasMedia {
+		return nil, nil
+	}
 	rows, err := s.db.Query(`SELECT f.id, f.path, f.size, f.mtime FROM files f
 		LEFT JOIN media m ON m.file_id = f.id
 		WHERE f.missing = 0 AND f.role = 'main'
@@ -3590,7 +3652,7 @@ func tracksJSON(ts []probe.Track) (string, error) {
 - [ ] **Step 4: Verificar que pasa**
 
 Run: `go vet ./internal/store/ && go test ./internal/store/ -v`
-Expected: PASS (los tests existentes + `TestPendingProbes`, `TestSaveProbesUpserts`)
+Expected: PASS (los tests existentes + `TestPendingProbes`, `TestSaveProbesUpserts`, `TestReadOnlyStage1Catalog`)
 
 - [ ] **Step 5: Commit**
 
@@ -3860,6 +3922,9 @@ type mediaRow struct {
 // results of its present main files. Stale results (the file changed since)
 // and failed ones are ignored, so the name-parsed values remain.
 func (s *Store) attachMedia(out []VersionView, pos map[int64]int) error {
+	if !s.hasMedia {
+		return nil
+	}
 	rows, err := s.db.Query(`SELECT f.version_id, f.kind, m.duration_ms, m.width, m.height, m.video_codec, m.audio, m.subs
 		FROM files f JOIN media m ON m.file_id = f.id
 		WHERE f.version_id IS NOT NULL AND f.role = 'main' AND f.missing = 0 AND m.error = ''
