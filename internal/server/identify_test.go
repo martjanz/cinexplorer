@@ -40,7 +40,7 @@ func (f *fakeTMDB) Movie(ctx context.Context, id int, lang string) (tmdb.Details
 
 func (f *fakeTMDB) Image(ctx context.Context, path, size string) ([]byte, error) {
 	f.images = append(f.images, size+path)
-	return []byte("\xff\xd8\xff\xe0 jpeg"), nil
+	return []byte("\xff\xd8\xff\xe0 jpeg " + path), nil
 }
 
 func identifyServer(t *testing.T) (*Server, *fakeTMDB) {
@@ -130,15 +130,23 @@ func TestSearchEndpoint(t *testing.T) {
 func TestImageEndpoint(t *testing.T) {
 	s, f := identifyServer(t)
 	get := func(url string) int { return request(s.Handler(), "GET", url, "", "", "127.0.0.1").Code }
-	// A candidate not stored yet: its path comes in the query.
-	if code := get("/img/poster/7857.jpg?p=/p.jpg"); code != 200 {
-		t.Fatalf("candidate poster %d", code)
+	body := func(url string) string { return request(s.Handler(), "GET", url, "", "", "127.0.0.1").Body.String() }
+	// A candidate not stored yet: its path comes in the query, and it is
+	// shown but not cached, so it cannot decide the movie's cached poster.
+	if b := body("/img/poster/7857.jpg?p=/other.jpg"); !strings.HasSuffix(b, "/other.jpg") {
+		t.Fatalf("candidate poster %q", b)
+	}
+	if s.Images.Has(images.Poster, 7857) {
+		t.Fatal("candidate preview was cached")
 	}
 	s.Identifier.Adopt(context.Background(), 7857)
 	if code := get("/img/backdrop/7857.jpg"); code != 200 {
 		t.Fatalf("backdrop %d", code)
 	}
-	if code := get("/img/poster/7857.jpg"); code != 200 || len(f.images) != 2 {
+	if b := body("/img/poster/7857.jpg"); !strings.HasSuffix(b, "/p.jpg") {
+		t.Fatalf("movie poster %q", b)
+	}
+	if code := get("/img/poster/7857.jpg?p=/other.jpg"); code != 200 || len(f.images) != 3 {
 		t.Fatalf("cached poster %d, downloads %v", code, f.images)
 	}
 	rec := request(s.Handler(), "GET", "/img/poster/7857.jpg", "", "", "127.0.0.1")

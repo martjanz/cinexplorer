@@ -124,19 +124,22 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	path := r.URL.Query().Get("p")
 	m, found, err := s.Store.Movie(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var b []byte
 	if found {
-		path = m.PosterPath
+		path := m.PosterPath
 		if kind == images.Backdrop {
 			path = m.BackdropPath
 		}
+		b, err = s.Images.Get(r.Context(), kind, id, path)
+	} else {
+		// ?p= comes from the page (any page can send it): shown, never cached.
+		b, err = s.Images.Preview(r.Context(), kind, id, r.URL.Query().Get("p"))
 	}
-	b, err := s.Images.Get(r.Context(), kind, id, path)
 	if err != nil {
 		http.NotFound(w, r)
 		return

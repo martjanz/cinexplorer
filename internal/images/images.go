@@ -61,6 +61,17 @@ func (c *Cache) Has(kind Kind, id int) bool {
 // cached yet. Storing the download is best effort: the image is returned even
 // when it cannot be written to the cache.
 func (c *Cache) Get(ctx context.Context, kind Kind, id int, tmdbPath string) ([]byte, error) {
+	return c.get(ctx, kind, id, tmdbPath, !c.ReadOnly)
+}
+
+// Preview is Get without storing the download. It serves candidates whose
+// TMDB path comes from the browser: such a path must never decide what the
+// cache holds for a movie id.
+func (c *Cache) Preview(ctx context.Context, kind Kind, id int, tmdbPath string) ([]byte, error) {
+	return c.get(ctx, kind, id, tmdbPath, false)
+}
+
+func (c *Cache) get(ctx context.Context, kind Kind, id int, tmdbPath string, keep bool) ([]byte, error) {
 	if !ValidKind(kind) {
 		return nil, fmt.Errorf("images: kind %q", kind)
 	}
@@ -79,7 +90,7 @@ func (c *Cache) Get(ctx context.Context, kind Kind, id int, tmdbPath string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	if !c.ReadOnly {
+	if keep {
 		if err := store(name, b); err != nil {
 			log.Printf("no se pudo guardar %s: %v", name, err)
 		}

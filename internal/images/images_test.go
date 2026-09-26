@@ -124,3 +124,20 @@ func TestGetUnwritableCacheStillServes(t *testing.T) {
 		t.Fatalf("got %q, %v", b, err)
 	}
 }
+
+func TestPreviewDoesNotStore(t *testing.T) {
+	f := &fakeFetcher{}
+	c := &Cache{Dir: t.TempDir(), Fetch: f}
+	ctx := context.Background()
+	if b, err := c.Preview(ctx, Poster, 1, "/candidate.jpg"); err != nil || string(b) != "img:w342/candidate.jpg" {
+		t.Fatalf("got %q, %v", b, err)
+	}
+	if c.Has(Poster, 1) {
+		t.Fatal("preview stored the image")
+	}
+	// Once the real image is cached, previews serve it too.
+	c.Get(ctx, Poster, 1, "/real.jpg")
+	if b, _ := c.Preview(ctx, Poster, 1, "/candidate.jpg"); string(b) != "img:w342/real.jpg" {
+		t.Fatalf("preview after caching %q", b)
+	}
+}
