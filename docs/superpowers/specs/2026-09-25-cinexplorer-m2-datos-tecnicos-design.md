@@ -162,3 +162,16 @@ Store:
 - **Store**: `PendingProbes` (nuevo, sin cambios, cambiado, faltante, IFO), `SaveProbes`, agregación en `Versions()` y marca `best`.
 - **Escaneo**: árbol sintético con un MKV y un AVI mínimos → versiones con datos técnicos; segundo escaneo sin cambios no re-analiza.
 - **Corpus real** (opcional, fuera de CI): con `CINEXPLORER_PROBE_CORPUS=<dir>` y `ffprobe` disponible, compara lector nativo contra ffprobe (dimensiones exactas, duración ±2 s, codecs, cantidad de pistas) y reporta discrepancias. Divergencia conocida y aceptada: en AVI incompletos o con índice raro, la duración nativa es la declarada en el encabezado y ffprobe calcula otra (p. ej. *Husbands*: 142 min según encabezado y nombre, 136 según ffprobe). También: HE-AAC v2 cuyo AudioSpecificConfig declara mono y el decodificador produce estéreo (Parametric Stereo implícito, solo detectable decodificando). Resultado al diseñar: 1795 archivos comparados, 21 discrepancias de esos tipos, 0 fallas nativas.
+
+## 10. Pendientes (revisión final de la Etapa 2)
+
+No bloquean; conviene tenerlos en cuenta en las etapas siguientes.
+
+- **Etapa 3**: `markBest` agrupa por `quality.GroupKey`; con ids de TMDB se reemplaza la clave de agrupación en `markBest` (el resto no cambia). El cálculo de `best` debe seguir haciéndose sobre todas las versiones de la película, no sobre una página filtrada (relevante cuando la Etapa 4 filtre o pagine en el servidor).
+- `Versions()` hace tres consultas sin transacción; un `ReplaceVersions` concurrente puede dejar una respuesta con archivos o datos técnicos faltantes (el problema ya existía entre versiones y archivos). Envolverlas en una transacción de lectura.
+- Versiones en varias partes con alguna parte sin analizar: la duración suma solo las partes analizadas hasta el próximo escaneo. Opción: dejarla en 0 si falta alguna.
+- MKV con `A_MS/ACM`: aplicar las mismas correcciones de canales que AVI (reusar `aviAudio` sobre `CodecPrivate`).
+- Codecs de audio desconocidos quedan vacíos (`wavFormat`, modos de IFO sin nombre); mostrar el identificador crudo (`0x0002`).
+- `ffprobe` se detecta una vez por proceso: después de instalarlo hay que reiniciar la app (los archivos fallidos se reanalizan solos en el siguiente escaneo).
+- Un `ffprobe` que falla porque el disco tuvo un error momentáneo (con la raíz todavía presente) deja un error permanente hasta que el archivo cambie; `WaitDelay` en el `exec.Cmd` también evitaría cuelgues de pipes.
+

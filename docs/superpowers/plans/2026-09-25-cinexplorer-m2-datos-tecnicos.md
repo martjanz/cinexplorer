@@ -10,6 +10,8 @@
 
 Spec: `docs/superpowers/specs/2026-09-25-cinexplorer-m2-datos-tecnicos-design.md` (detalle de esta etapa) y `docs/superpowers/specs/2026-09-25-cinexplorer-design.md` §4 paso 4, §5.3.
 
+**Estado:** ejecutado. Este documento se regeneró al final desde el código definitivo, incluidas las correcciones de las revisiones (entre ellas `ProbeEnv`/`probe_version` para volver a analizar tras mejoras de los lectores o al instalar `ffprobe`); el historial de commits de la rama muestra el orden en que se aplicaron.
+
 **Nota sobre el código de este plan:** todo el código se prototipó y se probó antes de escribir el plan, incluida una comparación contra `ffprobe` sobre la colección real (`D:\cine` + `D:\cine-ordenar`). Copialo tal cual; si algo no compila o un test no da lo esperado, es un error del plan: reportalo en lugar de improvisar.
 
 ---
@@ -170,6 +172,11 @@ var (
 func invalid(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, args...))
 }
+
+// Version identifies what the readers know. Bump it when a change should
+// reach files that were already probed: the scanner reads again every file
+// whose stored result comes from an older version.
+const Version = 1
 
 // maxRead caps the bytes a native reader may read from one file, so a
 // malformed file never makes us walk a whole movie on an external drive.
@@ -687,6 +694,15 @@ func TestMKVNegativeDurationIgnored(t *testing.T) {
 	}
 }
 
+func TestMKVAbsurdChannelsIgnored(t *testing.T) {
+	file := append(mkvHeader("matroska"), pt.EBML(mkvSegment,
+		pt.EBML(mkvTracks, track(2, "A_AC3", pt.EBML(mkvAudio, pt.EBMLUint(mkvChannels, 200)))))...)
+	got, err := readMKV(src(file))
+	if err != nil || got.Audio[0].Channels != 0 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
 func TestMKVAbsurdPixelWidthIgnored(t *testing.T) {
 	file := append(mkvHeader("matroska"), pt.EBML(mkvSegment,
 		pt.EBML(mkvTracks, track(1, "V_MPEG4/ISO/AVC",
@@ -1112,6 +1128,9 @@ func (s *source) mkvTracks(e ebmlElem, segEnd int64, info *Info) error {
 			if *v > 65535 {
 				*v = 0
 			}
+		}
+		if ch > maxChannels {
+			ch = 0
 		}
 		if ietf != "" {
 			lang = ietf
@@ -2931,6 +2950,9 @@ var defaultProber = sync.OnceValue(func() Prober {
 	return Prober{FFprobe: path}
 })
 
+// HasFFprobe reports whether Probe can fall back to ffprobe.
+func HasFFprobe() bool { return defaultProber().FFprobe != "" }
+
 // Probe reads path with the default Prober, which uses ffprobe only if it is
 // on the PATH.
 func Probe(ctx context.Context, path string) (Info, error) {
@@ -3403,7 +3425,7 @@ func mediaLibrary(t *testing.T, s *Store) {
 
 func pendingPaths(t *testing.T, s *Store) []string {
 	t.Helper()
-	ts, err := s.PendingProbes()
+	ts, err := s.PendingProbes(ProbeEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3422,7 +3444,7 @@ func TestPendingProbes(t *testing.T) {
 		t.Fatalf("pending = %v, want %v", got, want)
 	}
 
-	ts, err := s.PendingProbes()
+	ts, err := s.PendingProbes(ProbeEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3449,7 +3471,7 @@ func TestPendingProbes(t *testing.T) {
 func TestSaveProbesUpserts(t *testing.T) {
 	s := open(t)
 	mediaLibrary(t, s)
-	ts, err := s.PendingProbes()
+	ts, err := s.PendingProbes(ProbeEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3489,11 +3511,51 @@ func TestReadOnlyStage1Catalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ro.Close()
-	if ts, err := ro.PendingProbes(); err != nil || len(ts) != 0 {
+	if ts, err := ro.PendingProbes(ProbeEnv{}); err != nil || len(ts) != 0 {
 		t.Fatalf("pending %v, %v", ts, err)
 	}
 	if vs, err := ro.Versions(); err != nil || len(vs) != 4 {
 		t.Fatalf("versions %d, %v", len(vs), err)
+	}
+}
+
+func TestPendingProbesAfterReaderOrFFprobeChange(t *testing.T) {
+	s := open(t)
+	mediaLibrary(t, s)
+	old := ProbeEnv{Version: 1}
+	ts, err := s.PendingProbes(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.SaveProbes([]ProbeResult{
+		{FileID: ts[0].FileID, Size: ts[0].Size, MTime: ts[0].MTime, Info: probe.Info{Height: 1080}, Env: old},
+		{FileID: ts[1].FileID, Size: ts[1].Size, MTime: ts[1].MTime, Err: "probe: unsupported format", Env: old},
+		{FileID: ts[2].FileID, Size: ts[2].Size, MTime: ts[2].MTime, Info: probe.Info{Height: 576}, Env: old},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := func(env ProbeEnv) []string {
+		ts, err := s.PendingProbes(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, x := range ts {
+			out = append(out, x.Path)
+		}
+		return out
+	}
+	if got := pending(old); len(got) != 0 {
+		t.Fatalf("same env: pending %v", got)
+	}
+	// ffprobe installed since: only the failure is worth another try.
+	if got := pending(ProbeEnv{Version: 1, FFprobe: true}); !reflect.DeepEqual(got, []string{"../cine/b/Stalker.avi"}) {
+		t.Fatalf("with ffprobe: pending %v", got)
+	}
+	// Better readers: everything they produced before is read again.
+	if got := pending(ProbeEnv{Version: 2}); len(got) != 3 {
+		t.Fatalf("new version: pending %v", got)
 	}
 }
 ```
@@ -3522,7 +3584,9 @@ CREATE TABLE IF NOT EXISTS media (
   height      INTEGER NOT NULL DEFAULT 0,
   video_codec TEXT    NOT NULL DEFAULT '',
   audio       TEXT    NOT NULL DEFAULT '[]', -- JSON []probe.Track
-  subs        TEXT    NOT NULL DEFAULT '[]'  -- JSON []probe.Track
+  subs        TEXT    NOT NULL DEFAULT '[]', -- JSON []probe.Track
+  probe_version INTEGER NOT NULL DEFAULT 0, -- probe.Version that produced the row
+  with_ffprobe  INTEGER NOT NULL DEFAULT 0  -- 1 if the ffprobe fallback was available
 );
 ```
 
@@ -3567,6 +3631,14 @@ type ProbeTarget struct {
 	MTime  int64
 }
 
+// ProbeEnv describes the prober a scan runs with. Rows made by an older
+// reader version, and failures recorded while the ffprobe fallback was
+// missing but is available now, are probed again.
+type ProbeEnv struct {
+	Version int  // probe.Version
+	FFprobe bool // probe.HasFFprobe()
+}
+
 // ProbeResult is what reading a target produced. Err is set when the file was
 // read but could not be understood; such results are kept so the file is not
 // read again until it changes.
@@ -3576,11 +3648,13 @@ type ProbeResult struct {
 	MTime  int64
 	Info   probe.Info
 	Err    string
+	Env    ProbeEnv
 }
 
 // PendingProbes returns the present main video files, and the title set IFOs
-// of DVD versions, that have never been probed or changed since.
-func (s *Store) PendingProbes() ([]ProbeTarget, error) {
+// of DVD versions, that have never been probed, changed since, or were
+// probed in a way env improves on (see ProbeEnv).
+func (s *Store) PendingProbes(env ProbeEnv) ([]ProbeTarget, error) {
 	if !s.hasMedia {
 		return nil, nil
 	}
@@ -3588,8 +3662,9 @@ func (s *Store) PendingProbes() ([]ProbeTarget, error) {
 		LEFT JOIN media m ON m.file_id = f.id
 		WHERE f.missing = 0 AND f.role = 'main'
 		  AND (f.kind = 'video' OR (f.kind = 'dvd' AND upper(f.path) GLOB '*/VTS_[0-9][0-9]_0.IFO'))
-		  AND (m.file_id IS NULL OR m.size != f.size OR m.mtime != f.mtime)
-		ORDER BY f.path`)
+		  AND (m.file_id IS NULL OR m.size != f.size OR m.mtime != f.mtime OR m.probe_version < ?
+		       OR (? AND m.error != '' AND m.with_ffprobe = 0))
+		ORDER BY f.path`, env.Version, env.FFprobe)
 	if err != nil {
 		return nil, err
 	}
@@ -3613,11 +3688,13 @@ func (s *Store) SaveProbes(rs []ProbeResult) error {
 	}
 	defer tx.Rollback()
 	up, err := tx.Prepare(`INSERT INTO media (file_id, size, mtime, prober, error, container, duration_ms,
-		width, height, video_codec, audio, subs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		width, height, video_codec, audio, subs, probe_version, with_ffprobe)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id) DO UPDATE SET size = excluded.size, mtime = excluded.mtime,
 		prober = excluded.prober, error = excluded.error, container = excluded.container,
 		duration_ms = excluded.duration_ms, width = excluded.width, height = excluded.height,
-		video_codec = excluded.video_codec, audio = excluded.audio, subs = excluded.subs`)
+		video_codec = excluded.video_codec, audio = excluded.audio, subs = excluded.subs,
+		probe_version = excluded.probe_version, with_ffprobe = excluded.with_ffprobe`)
 	if err != nil {
 		return err
 	}
@@ -3633,7 +3710,7 @@ func (s *Store) SaveProbes(rs []ProbeResult) error {
 		}
 		i := r.Info
 		if _, err := up.Exec(r.FileID, r.Size, r.MTime, i.Prober, r.Err, i.Container, i.DurationMs,
-			i.Width, i.Height, i.VideoCodec, audio, subs); err != nil {
+			i.Width, i.Height, i.VideoCodec, audio, subs, r.Env.Version, r.Env.FFprobe); err != nil {
 			return err
 		}
 	}
@@ -4089,6 +4166,7 @@ import (
 
 	"cinexplorer/internal/probe"
 	"cinexplorer/internal/probe/probetest"
+	"cinexplorer/internal/store"
 )
 
 func TestScanProbesMainVideosOnce(t *testing.T) {
@@ -4164,7 +4242,7 @@ func TestScanCancelKeepsProbedResults(t *testing.T) {
 	if err := sc.Run(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
-	pending, err := st.PendingProbes()
+	pending, err := st.PendingProbes(store.ProbeEnv{})
 	if err != nil || len(pending) != 2 {
 		t.Fatalf("pending %+v, %v", pending, err)
 	}
@@ -4214,8 +4292,35 @@ func TestScanStopsWhenRootVanishesDuringProbe(t *testing.T) {
 		t.Fatalf("err = %v after %d calls", err, calls)
 	}
 	// Nothing was stored for the file whose read failed with the drive gone.
-	if pending, _ := st.PendingProbes(); len(pending) != 3 {
+	if pending, _ := st.PendingProbes(store.ProbeEnv{}); len(pending) != 3 {
 		t.Fatalf("pending %d, want 3", len(pending))
+	}
+}
+
+func TestScanProbesAgainWithBetterProber(t *testing.T) {
+	disk, app, st := setup(t)
+	writeFile(t, filepath.Join(disk, "cine", "a", "A.rmvb"), 4096, 'a')
+	calls := 0
+	unsupported := func(context.Context, string) (probe.Info, error) {
+		calls++
+		return probe.Info{}, fmt.Errorf("%w: rmvb", probe.ErrUnsupported)
+	}
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine"}, Store: st, Probe: unsupported,
+		ProbeEnv: store.ProbeEnv{Version: 1}}
+	for range 2 {
+		if err := sc.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("unchanged prober read the file %d times", calls)
+	}
+	sc.ProbeEnv.FFprobe = true // ffprobe installed since the last scan
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("with ffprobe available the failed file was not retried (%d calls)", calls)
 	}
 }
 ```
@@ -4274,7 +4379,11 @@ const probeBatch = 50
 // failures are left for the next scan; format errors are stored so the file
 // is not read again until it changes. A root that disappears stops the phase.
 func (s *Scanner) probeAll(ctx context.Context, roots []string) error {
-	pending, err := s.Store.PendingProbes()
+	read, env := s.Probe, s.ProbeEnv
+	if read == nil {
+		read, env = probe.Probe, store.ProbeEnv{Version: probe.Version, FFprobe: probe.HasFFprobe()}
+	}
+	pending, err := s.Store.PendingProbes(env)
 	if err != nil {
 		return err
 	}
@@ -4287,10 +4396,6 @@ func (s *Scanner) probeAll(ctx context.Context, roots []string) error {
 	s.mu.Lock()
 	s.status.ToProbe = len(targets)
 	s.mu.Unlock()
-	read := s.Probe
-	if read == nil {
-		read = probe.Probe
-	}
 
 	var batch []store.ProbeResult
 	flush := func() error {
@@ -4314,7 +4419,7 @@ func (s *Scanner) probeAll(ctx context.Context, roots []string) error {
 				return errors.Join(fmt.Errorf("la raíz %s desapareció durante el análisis", root), flush())
 			}
 		}
-		r := store.ProbeResult{FileID: t.FileID, Size: t.Size, MTime: t.MTime, Info: info}
+		r := store.ProbeResult{FileID: t.FileID, Size: t.Size, MTime: t.MTime, Info: info, Env: env}
 		switch {
 		case err == nil:
 			batch = append(batch, r)
