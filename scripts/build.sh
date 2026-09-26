@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Cross-compiles Cinexplorer for Windows, macOS (universal) and Linux into dist/cinexplorer/.
+# Builds the web app and cross-compiles Cinexplorer for Windows, macOS
+# (universal) and Linux into dist/cinexplorer/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+(cd web && npm ci && npm test && npm run build)
 out=dist/cinexplorer
 mkdir -p "$out"
 export CGO_ENABLED=0

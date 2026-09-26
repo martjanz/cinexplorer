@@ -1,6 +1,7 @@
 .superpowers/
 
 .worktrees/
-dist/
+/dist/
 .run/
 *.db
+node_modules/
