@@ -25,13 +25,22 @@
   .empty { color: var(--muted); padding: 40px 0; }
   .best { font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--bg);
           background: #3fb950; border-radius: 3px; padding: 1px 6px; margin-left: 6px; vertical-align: 2px; }
+  .conf { font-size: 11px; color: var(--muted); margin-left: 6px; }
+  .conf.warn { color: #d29922; }
+  .cands { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+  .cand { display: flex; gap: 8px; align-items: center; background: #171a20; border-radius: 4px; padding: 6px 8px; }
+  .cand img { width: 34px; height: 51px; object-fit: cover; background: #262a31; border-radius: 2px; }
+  .cand button, .find button { background: none; border: 1px solid #30353d; color: var(--fg); border-radius: 3px;
+                 padding: 2px 8px; cursor: pointer; font: inherit; font-size: 12px; }
+  .find { display: flex; gap: 6px; margin-top: 8px; }
+  .find input { margin: 0; max-width: 260px; padding: 4px 8px; }
   @media (max-width: 600px) { header, main { padding-left: 16px; padding-right: 16px; } .row { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <header>
   <b>CINEXPLORER</b>
-  <nav><button data-view="versions" class="on">Versiones</button><button data-view="copies">Copias idénticas</button></nav>
+  <nav><button data-view="versions" class="on">Versiones</button><button data-view="unidentified">Sin identificar</button><button data-view="copies">Copias idénticas</button></nav>
   <div id="status"></div>
 </header>
 <main>
@@ -40,7 +49,7 @@
 </main>
 <script>
 const $ = (s) => document.querySelector(s);
-let view = 'versions', versions = [], copies = [], wasRunning = false;
+let view = 'versions', versions = [], copies = [], unidentified = [], wasRunning = false;
 
 const gb = (n) => (n / 1e9).toFixed(1) + ' GB';
 const codecNames = { h264: 'H.264', hevc: 'HEVC', av1: 'AV1', vp9: 'VP9', vp8: 'VP8', mpeg4: 'MPEG-4', mpeg2: 'MPEG-2', mpeg1: 'MPEG-1', wmv: 'WMV', rv: 'RealVideo' };
@@ -53,18 +62,50 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 async function post(url, body) {
   const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!r.ok) alert(await r.text());
+  return r.ok;
 }
 
 async function load() {
-  [versions, copies] = await Promise.all([
+  [versions, copies, unidentified] = await Promise.all([
     fetch('/api/versions').then((r) => r.json()),
     fetch('/api/duplicates').then((r) => r.json()),
+    fetch('/api/unidentified').then((r) => r.json()),
   ]);
   render();
 }
 
+const pct = (x) => Math.round(x * 100) + '%';
+
+function identity(v) {
+  const id = v.identification;
+  if (!id) return '';
+  if (v.movie) return id.status === 'manual' ? '<span class="conf">manual</span>' : `<span class="conf">${pct(id.confidence)}</span>`;
+  const label = { unmatched: 'sin identificar', ignored: 'no es película', extra: 'extra', manual: 'id inválido' }[id.status];
+  return label ? `<span class="conf warn">${label}</span>` : '';
+}
+
+function candidateBox(fp, c) {
+  const img = `/img/poster/${c.tmdbId}.jpg` + (c.posterPath ? '?p=' + encodeURIComponent(c.posterPath) : '');
+  return `<div class="cand"><img src="${img}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+    <div><div>${esc(c.title)} <span class="meta">${c.year || ''}</span></div>
+    <div class="meta">${c.originalTitle && c.originalTitle !== c.title ? esc(c.originalTitle) + ' · ' : ''}${pct(c.score)}</div></div>
+    <button data-confirm="${esc(fp)}" data-id="${c.tmdbId}">Confirmar</button></div>`;
+}
+
+function unidentifiedRow(u) {
+  const tokens = [u.title, u.year, u.director].filter(Boolean).map(esc).join(' · ');
+  return `<div class="row"><div>
+      <div class="t">${tokens || '—'}</div>
+      <div class="path">${esc(u.dir)}</div>
+      <div class="cands" id="c-${esc(u.fingerprint)}">${u.candidates.map((c) => candidateBox(u.fingerprint, c)).join('') || '<span class="meta">Sin candidatos.</span>'}</div>
+      <div class="find"><input data-q="${esc(u.fingerprint)}" placeholder="Título o tt1234567" value="${esc(u.title)}"><button data-find="${esc(u.fingerprint)}">Buscar</button></div>
+    </div><div class="acts"></div></div>`;
+}
+
 function versionRow(v) {
   const main = v.files.find((f) => f.role === 'main');
+  const m = v.movie;
+  const director = m ? m.directors.map((d) => d.name).join(', ') : v.director;
   const tech = [v.resolution, v.source, v.codec && codecName(v.codec)].filter(Boolean).map(esc);
   if (v.durationMs) tech.push(duration(v.durationMs));
   if (v.parts > 1) tech.push(v.parts + ' partes');
@@ -74,7 +115,7 @@ function versionRow(v) {
   const subs = [...new Set([...v.subs.map((t) => t.lang || '?'), ...(v.subLangs ? v.subLangs.split(',') : [])])];
   if (subs.length) media.push('subs ' + esc(subs.join(', ')));
   return `<div class="row"><div>
-      <div class="t">${esc(v.title)}${v.best ? '<em class="best">MEJOR</em>' : ''} <span>${v.year || ''} ${v.director ? '· ' + esc(v.director) : ''}</span></div>
+      <div class="t">${esc(m ? m.title : v.title)}${v.best ? '<em class="best">MEJOR</em>' : ''} <span>${(m ? m.year : v.year) || ''} ${director ? '· ' + esc(director) : ''}</span>${identity(v)}</div>
       <div class="meta">${tech.join(' · ')}</div>
       ${media.length ? `<div class="meta">${media.join(' · ')}</div>` : ''}
       <div class="path">${esc(v.dir)}</div>
@@ -90,8 +131,11 @@ function copyRow(c) {
 
 function render() {
   const q = $('#q').value.trim().toLowerCase();
+  const text = (v) => [v.title, v.director, v.dir, v.movie && v.movie.title, v.movie && v.movie.originalTitle].join(' ').toLowerCase();
   const rows = view === 'versions'
-    ? versions.filter((v) => !q || [v.title, v.director, v.dir].join(' ').toLowerCase().includes(q)).map(versionRow)
+    ? versions.filter((v) => !q || text(v).includes(q)).map(versionRow)
+    : view === 'unidentified'
+    ? unidentified.filter((u) => !q || text(u).includes(q)).map(unidentifiedRow)
     : copies.filter((c) => !q || c.paths.join(' ').toLowerCase().includes(q)).map(copyRow);
   $('#list').innerHTML = rows.length ? rows.join('') : '<div class="empty">Sin resultados.</div>';
 }
@@ -104,24 +148,52 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('nav button').forEach((n) => n.classList.toggle('on', n === b));
     render();
   }
+  if (b.dataset.confirm) {
+    b.disabled = true;
+    post('/api/identify', { fingerprint: b.dataset.confirm, action: 'movie', tmdbId: Number(b.dataset.id) })
+      .then((ok) => (ok ? load() : (b.disabled = false)));
+  }
+  if (b.dataset.find) findCandidates(b.dataset.find);
   if (b.dataset.open) post('/api/open', { path: b.dataset.open });
   if (b.dataset.reveal) post('/api/reveal', { path: b.dataset.reveal });
 });
 $('#q').addEventListener('input', render);
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.dataset.q) findCandidates(e.target.dataset.q); });
+
+async function findCandidates(fp) {
+  const q = document.querySelector(`input[data-q="${CSS.escape(fp)}"]`).value.trim();
+  if (!q) return;
+  const box = document.getElementById('c-' + fp);
+  const r = await fetch('/api/tmdb/search?q=' + encodeURIComponent(q));
+  if (!r.ok) { box.innerHTML = `<span class="meta">${esc(await r.text())}</span>`; return; }
+  const cs = await r.json();
+  box.innerHTML = cs.map((c) => candidateBox(fp, c)).join('') || '<span class="meta">Sin resultados.</span>';
+}
+
+function identifyStatus(id) {
+  if (!id) return '';
+  return {
+    running: id.toEnrich ? `Completando datos… ${id.enriched}/${id.toEnrich}` : `Identificando… ${id.identified}/${id.toIdentify}`,
+    offline: 'Sin conexión: se reintenta más tarde',
+    noToken: 'Falta tmdbToken en config.json',
+    badToken: 'El token de TMDB no es válido',
+  }[id.state] || '';
+}
 
 async function poll() {
   let delay = 5000;
   try {
     const s = await fetch('/api/status').then((r) => r.json());
     const sc = s.scan;
+    const running = sc.running || (!!s.identify && s.identify.state === 'running');
     $('#status').textContent = s.readOnly ? 'Modo consulta (solo lectura)'
       : sc.running && sc.toProbe ? `Analizando… ${sc.probed}/${sc.toProbe}`
       : sc.running ? `Escaneando… ${sc.files} archivos`
       : sc.lastError ? 'Error: ' + sc.lastError
-      : `${versions.length} versiones`;
-    if (wasRunning && !sc.running) load();
-    wasRunning = sc.running;
-    delay = sc.running ? 1000 : 5000;
+      : identifyStatus(s.identify) || `${versions.length} versiones · ${unidentified.length} sin identificar`;
+    if (wasRunning && !running) load();
+    wasRunning = running;
+    delay = running ? 1000 : 5000;
   } catch (e) {
     console.error('poll', e);
   } finally {
