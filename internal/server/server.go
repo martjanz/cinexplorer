@@ -4,7 +4,6 @@ package server
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -20,9 +19,6 @@ import (
 	"cinexplorer/internal/store"
 )
 
-//go:embed web
-var webFS embed.FS
-
 type Server struct {
 	AppDir   string
 	Roots    []string // catalog-form paths, as in config.json
@@ -36,15 +32,13 @@ type Server struct {
 	Identifier *identify.Runner // nil in read-only mode
 	Images     *images.Cache
 	Language   string
+
+	Static fs.FS // the web app; nil: the embedded build
 }
 
 func (s *Server) Handler() http.Handler {
-	static, err := fs.Sub(webFS, "web")
-	if err != nil {
-		panic(err)
-	}
 	mux := http.NewServeMux()
-	mux.Handle("GET /", http.FileServerFS(static))
+	mux.Handle("GET /", s.static())
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/versions", s.versions)
 	mux.HandleFunc("GET /api/versions/{key}", s.version)

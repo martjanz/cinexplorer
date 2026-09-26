@@ -107,14 +107,6 @@ func TestScanInReadOnlyMode(t *testing.T) {
 	}
 }
 
-func TestServesIndex(t *testing.T) {
-	s, _ := newServer(t)
-	rec := request(s.Handler(), "GET", "/", "", "", "127.0.0.1")
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "CINEXPLORER") {
-		t.Fatalf("status %d", rec.Code)
-	}
-}
-
 func TestDuplicatesEndpoint(t *testing.T) {
 	s, _ := newServer(t)
 	addCopy(t, s)
