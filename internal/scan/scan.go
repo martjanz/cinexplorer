@@ -18,6 +18,7 @@ import (
 	"cinexplorer/internal/fingerprint"
 	"cinexplorer/internal/grouping"
 	"cinexplorer/internal/mediafile"
+	"cinexplorer/internal/probe"
 	"cinexplorer/internal/store"
 )
 
@@ -28,6 +29,8 @@ type Status struct {
 	Files     int64     `json:"files"`
 	Hashed    int64     `json:"hashed"`
 	Versions  int       `json:"versions"`
+	ToProbe   int       `json:"toProbe"` // files whose headers this run reads
+	Probed    int       `json:"probed"`
 	LastError string    `json:"lastError"`
 	Finished  time.Time `json:"finished"`
 }
@@ -36,6 +39,8 @@ type Scanner struct {
 	AppDir string
 	Roots  []string // catalog form
 	Store  *store.Store
+	// Probe reads a file's technical data; nil means probe.Probe.
+	Probe func(ctx context.Context, path string) (probe.Info, error)
 
 	mu     sync.Mutex
 	status Status
@@ -188,7 +193,65 @@ func (s *Scanner) run(ctx context.Context) error {
 	s.mu.Lock()
 	s.status.Versions = len(versions)
 	s.mu.Unlock()
-	return nil
+	return s.probeAll(ctx)
+}
+
+// probeBatch is how many probe results are committed at once, so an
+// interrupted run keeps most of its work.
+const probeBatch = 50
+
+// probeAll reads the headers of the files that are new or changed since they
+// were last probed. Read failures are left for the next scan; format errors
+// are stored so the file is not read again until it changes.
+func (s *Scanner) probeAll(ctx context.Context) error {
+	targets, err := s.Store.PendingProbes()
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.status.ToProbe = len(targets)
+	s.mu.Unlock()
+	read := s.Probe
+	if read == nil {
+		read = probe.Probe
+	}
+
+	var batch []store.ProbeResult
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		err := s.Store.SaveProbes(batch)
+		batch = batch[:0]
+		return err
+	}
+	for _, t := range targets {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(err, flush())
+		}
+		info, err := read(ctx, appdir.Abs(s.AppDir, t.Path))
+		r := store.ProbeResult{FileID: t.FileID, Size: t.Size, MTime: t.MTime, Info: info}
+		switch {
+		case err == nil:
+			batch = append(batch, r)
+		case ctx.Err() != nil:
+			return errors.Join(ctx.Err(), flush())
+		case errors.Is(err, probe.ErrIO):
+			log.Printf("no se puede leer %s, se reintentará: %v", t.Path, err)
+		default:
+			r.Err = err.Error()
+			batch = append(batch, r)
+		}
+		s.mu.Lock()
+		s.status.Probed++
+		s.mu.Unlock()
+		if len(batch) >= probeBatch {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	return flush()
 }
 
 func (s *Scanner) add(files, hashed int64) {
