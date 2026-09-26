@@ -154,3 +154,40 @@ func TestScanRunsWhenWritable(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestVersionsEndpointIncludesTechnicalFields(t *testing.T) {
+	s, _ := newServer(t)
+	rec := request(s.Handler(), "GET", "/api/versions", "", "", "127.0.0.1:8080")
+	var vs []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &vs); err != nil || len(vs) != 1 {
+		t.Fatalf("body %s: %v", rec.Body, err)
+	}
+	for _, k := range []string{"durationMs", "width", "height", "videoCodec", "best"} {
+		if _, ok := vs[0][k]; !ok {
+			t.Errorf("missing %q in %v", k, vs[0])
+		}
+	}
+	for _, k := range []string{"audio", "subs"} {
+		if _, ok := vs[0][k].([]any); !ok {
+			t.Errorf("%q must be a JSON array, got %v", k, vs[0][k])
+		}
+	}
+}
+
+func TestStatusReportsProbeProgress(t *testing.T) {
+	s, _ := newServer(t)
+	s.Scanner = &scan.Scanner{}
+	rec := request(s.Handler(), "GET", "/api/status", "", "", "127.0.0.1:8080")
+	var body struct {
+		Scan map[string]any `json:"scan"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := body.Scan["toProbe"]; !ok {
+		t.Fatalf("status %s", rec.Body)
+	}
+	if _, ok := body.Scan["probed"]; !ok {
+		t.Fatalf("status %s", rec.Body)
+	}
+}

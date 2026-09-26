@@ -23,6 +23,8 @@
   .acts button { background: none; border: 1px solid #30353d; color: var(--fg); border-radius: 3px;
                  padding: 3px 10px; cursor: pointer; margin-left: 6px; font: inherit; font-size: 12px; }
   .empty { color: var(--muted); padding: 40px 0; }
+  .best { font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--bg);
+          background: #3fb950; border-radius: 3px; padding: 1px 6px; margin-left: 6px; vertical-align: 2px; }
   @media (max-width: 600px) { header, main { padding-left: 16px; padding-right: 16px; } .row { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -41,6 +43,11 @@ const $ = (s) => document.querySelector(s);
 let view = 'versions', versions = [], copies = [], wasRunning = false;
 
 const gb = (n) => (n / 1e9).toFixed(1) + ' GB';
+const codecNames = { h264: 'H.264', hevc: 'HEVC', av1: 'AV1', vp9: 'VP9', vp8: 'VP8', mpeg4: 'MPEG-4', mpeg2: 'MPEG-2', mpeg1: 'MPEG-1', wmv: 'WMV', rv: 'RealVideo' };
+const codecName = (c) => codecNames[c] || c.toUpperCase();
+const duration = (ms) => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; };
+const channels = (n) => ({ 1: '1.0', 2: '2.0', 6: '5.1', 8: '7.1' }[n] || (n ? n + ' can.' : ''));
+const track = (t) => [t.lang || '?', channels(t.channels), t.codec].filter(Boolean).join(' ');
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 async function post(url, body) {
@@ -58,13 +65,18 @@ async function load() {
 
 function versionRow(v) {
   const main = v.files.find((f) => f.role === 'main');
-  const tech = [v.resolution, v.source, v.codec].filter(Boolean).map(esc);
+  const tech = [v.resolution, v.source, v.codec && codecName(v.codec)].filter(Boolean).map(esc);
+  if (v.durationMs) tech.push(duration(v.durationMs));
   if (v.parts > 1) tech.push(v.parts + ' partes');
   tech.push(gb(v.size));
-  if (v.subLangs) tech.push('subs ' + esc(v.subLangs));
+  const media = [];
+  if (v.audio.length) media.push('audio ' + esc(v.audio.map(track).join(', ')));
+  const subs = [...new Set([...v.subs.map((t) => t.lang || '?'), ...(v.subLangs ? v.subLangs.split(',') : [])])];
+  if (subs.length) media.push('subs ' + esc(subs.join(', ')));
   return `<div class="row"><div>
-      <div class="t">${esc(v.title)} <span>${v.year || ''} ${v.director ? '· ' + esc(v.director) : ''}</span></div>
+      <div class="t">${esc(v.title)}${v.best ? '<em class="best">MEJOR</em>' : ''} <span>${v.year || ''} ${v.director ? '· ' + esc(v.director) : ''}</span></div>
       <div class="meta">${tech.join(' · ')}</div>
+      ${media.length ? `<div class="meta">${media.join(' · ')}</div>` : ''}
       <div class="path">${esc(v.dir)}</div>
     </div><div class="acts">${main ? `<button data-open="${esc(main.path)}">▶ Ver</button><button data-reveal="${esc(main.path)}">Carpeta</button>` : ''}</div></div>`;
 }
@@ -103,6 +115,7 @@ async function poll() {
     const s = await fetch('/api/status').then((r) => r.json());
     const sc = s.scan;
     $('#status').textContent = s.readOnly ? 'Modo consulta (solo lectura)'
+      : sc.running && sc.toProbe ? `Analizando… ${sc.probed}/${sc.toProbe}`
       : sc.running ? `Escaneando… ${sc.files} archivos`
       : sc.lastError ? 'Error: ' + sc.lastError
       : `${versions.length} versiones`;
