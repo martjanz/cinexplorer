@@ -57,7 +57,10 @@ func (s *Server) Handler() http.Handler {
 	return localOnly(mux)
 }
 
-// localOnly rejects requests whose Host is not localhost (DNS rebinding).
+// localOnly rejects requests whose Host is not localhost (DNS rebinding) and
+// requests made by other sites' pages: an <img> or <script> pointing at the
+// app would otherwise reveal which movies the catalog has, or spend the TMDB
+// quota. Navigating to the app from a link still works.
 func localOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
@@ -68,6 +71,15 @@ func localOnly(next http.Handler) http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		site := r.Header.Get("Sec-Fetch-Site")
+		navigation := r.Method == http.MethodGet && r.Header.Get("Sec-Fetch-Mode") == "navigate"
+		if (site == "cross-site" || site == "same-site") && !navigation {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		// Browsers without Sec-Fetch-* still refuse to show the responses
+		// to other origins.
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		next.ServeHTTP(w, r)
 	})
 }

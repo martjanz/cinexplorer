@@ -98,6 +98,13 @@ func TestSetCorrectionValidates(t *testing.T) {
 	if err := s.SetCorrection("", StatusIgnored, 0); !errors.Is(err, ErrUnknownFingerprint) {
 		t.Errorf("empty fingerprint: %v", err)
 	}
+	// a2 is the second part of a version: not a version's fingerprint.
+	if err := s.SetCorrection("a2", StatusIgnored, 0); !errors.Is(err, ErrUnknownFingerprint) {
+		t.Errorf("second part: %v", err)
+	}
+	if ok, err := s.IsRepresentative("a1"); !ok || err != nil {
+		t.Errorf("a1: %v %v", ok, err)
+	}
 	if err := s.SetCorrection("a1", StatusAuto, 1); err == nil {
 		t.Error("auto accepted as a correction")
 	}
@@ -124,7 +131,10 @@ func TestMoviesRoundTripAndEnrichQueue(t *testing.T) {
 		{Fingerprint: "a1", Status: StatusAuto, TMDBID: 7857},
 		{Fingerprint: "vob2", Status: StatusAuto, TMDBID: 1398},
 	})
-	s.SetCorrection("a2", StatusExtra, 500)
+	s.SaveIdentifications([]Identification{
+		{Fingerprint: "a2", Status: StatusExtra, TMDBID: 500},
+		{Fingerprint: "gone", Status: StatusAuto, TMDBID: 900}, // its file was rewritten
+	})
 	ids, err := s.MoviesToEnrich("es-ES")
 	if err != nil || !reflect.DeepEqual(ids, []int{500, 1398}) {
 		t.Fatalf("to enrich %v %v", ids, err)
@@ -161,5 +171,27 @@ func TestInvalidateMovie(t *testing.T) {
 	ts, _ := s.IdentifyTargets()
 	if ts[0].Current != nil || ts[1].Current == nil || ts[1].Current.Status != StatusManual {
 		t.Fatalf("targets %+v %+v", ts[0].Current, ts[1].Current)
+	}
+}
+
+func TestSharedFolderNFOsOnlyForTheirVersion(t *testing.T) {
+	s := open(t)
+	s.SyncFiles([]FileRow{
+		{Path: "../cine/1970s/Amarcord CD1.avi", Size: 700, MTime: 1, Fingerprint: "a", Kind: "video"},
+		{Path: "../cine/1970s/Chinatown.avi", Size: 700, MTime: 1, Fingerprint: "c", Kind: "video"},
+		{Path: "../cine/1970s/Amarcord.nfo", Size: 1, MTime: 1, Kind: "info"},
+		{Path: "../cine/1970s/release.nfo", Size: 1, MTime: 1, Kind: "info"},
+	}, roots)
+	main := func(p string) []grouping.Member { return []grouping.Member{{Path: p, Role: grouping.RoleMain}} }
+	s.ReplaceVersions([]grouping.Version{
+		{Dir: "../cine/1970s", Parsed: nameparse.Parsed{Title: "Amarcord"}, Size: 700, Parts: 1, Members: main("../cine/1970s/Amarcord CD1.avi")},
+		{Dir: "../cine/1970s", Parsed: nameparse.Parsed{Title: "Chinatown"}, Size: 700, Parts: 1, Members: main("../cine/1970s/Chinatown.avi")},
+	})
+	ts, err := s.IdentifyTargets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ts) != 2 || !reflect.DeepEqual(ts[0].NFOs, []string{"../cine/1970s/Amarcord.nfo"}) || ts[1].NFOs != nil {
+		t.Fatalf("targets %+v", ts)
 	}
 }

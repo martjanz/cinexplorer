@@ -32,7 +32,10 @@ const (
 	PrefetchAll     = "all"
 )
 
-var ErrBusy = errors.New("ya hay una identificación en curso")
+var (
+	ErrBusy    = errors.New("ya hay una identificación en curso")
+	ErrNoToken = errors.New("sin token de TMDB")
+)
 
 // Retry delays while offline: the first, doubled up to the last.
 const (
@@ -80,7 +83,10 @@ func (r *Runner) Status() Status {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s := r.status
-	if s.State == "" {
+	switch {
+	case r.TMDB == nil:
+		s.State = StateNoToken // known before any run
+	case s.State == "":
 		s.State = StateIdle
 	}
 	return s
@@ -276,7 +282,7 @@ func (r *Runner) identifyAll(ctx context.Context, fetched map[int]tmdb.Details) 
 // identification is validated. tmdb.ErrNotFound means the id does not exist.
 func (r *Runner) Adopt(ctx context.Context, id int) error {
 	if r.TMDB == nil {
-		return errors.New("sin token de TMDB")
+		return ErrNoToken
 	}
 	m, err := r.fetchMovie(ctx, id, nil)
 	if err != nil {

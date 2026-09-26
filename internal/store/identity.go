@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path"
+	"strings"
 	"time"
 )
 
@@ -53,29 +54,78 @@ type IdentifyTarget struct {
 	Current     *Identification // nil when never identified
 }
 
-// representatives maps each version id to the fingerprint of its
-// representative file: the present main file with the lowest part number,
-// the largest on ties (the biggest VOB of a DVD).
-func (s *Store) representatives(tx querier) (map[int64]string, error) {
-	rows, err := tx.Query(`SELECT version_id, fingerprint FROM files
+// representative is the file that stands for a version.
+type representative struct {
+	fingerprint string
+	path        string
+}
+
+// representatives maps each version id to its representative file: the
+// present main file with the lowest part number, the largest on ties (the
+// biggest VOB of a DVD).
+func (s *Store) representatives(tx querier) (map[int64]representative, error) {
+	rows, err := tx.Query(`SELECT version_id, fingerprint, path FROM files
 		WHERE version_id IS NOT NULL AND role = 'main' AND missing = 0 AND fingerprint != ''
 		ORDER BY version_id, part, size DESC, path`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[int64]string{}
+	out := map[int64]representative{}
 	for rows.Next() {
 		var id int64
-		var fp string
-		if err := rows.Scan(&id, &fp); err != nil {
+		var r representative
+		if err := rows.Scan(&id, &r.fingerprint, &r.path); err != nil {
 			return nil, err
 		}
 		if _, ok := out[id]; !ok {
-			out[id] = fp
+			out[id] = r
 		}
 	}
 	return out, rows.Err()
+}
+
+// IsRepresentative reports whether fingerprint identifies a version: it is
+// the fingerprint of some version's representative file. Corrections are
+// only accepted for such fingerprints (a second part's would never show).
+func (s *Store) IsRepresentative(fingerprint string) (bool, error) {
+	if fingerprint == "" {
+		return false, nil
+	}
+	reps, err := s.representatives(s.db)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range reps {
+		if r.fingerprint == fingerprint {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// nfosFor picks the .nfo files that describe a version. In a folder of its
+// own every .nfo counts; in a folder shared by several versions (loose movies
+// in a root or a decade folder) only a .nfo named like the version's file
+// does ("Amarcord.nfo" for "Amarcord CD1.avi"), or one movie's IMDb id would
+// be forced on all of them.
+func nfosFor(nfos []string, shared bool, repPath string) []string {
+	if !shared {
+		return nfos
+	}
+	rep := strings.ToLower(stem(repPath))
+	var out []string
+	for _, n := range nfos {
+		if s := strings.ToLower(stem(n)); s != "" && strings.HasPrefix(rep, s) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func stem(p string) string {
+	b := path.Base(p)
+	return strings.TrimSuffix(b, path.Ext(b))
 }
 
 type querier interface {
@@ -149,23 +199,37 @@ func (s *Store) IdentifyTargets() ([]IdentifyTarget, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []IdentifyTarget
-	seen := map[string]bool{}
+	type version struct {
+		id int64
+		t  IdentifyTarget
+	}
+	var vs []version
+	perDir := map[string]int{}
 	for rows.Next() {
-		var id int64
-		var t IdentifyTarget
-		if err := rows.Scan(&id, &t.Dir, &t.Title, &t.Year, &t.Director, &t.IMDbID); err != nil {
+		var v version
+		if err := rows.Scan(&v.id, &v.t.Dir, &v.t.Title, &v.t.Year, &v.t.Director, &v.t.IMDbID); err != nil {
 			return nil, err
 		}
-		fp, ok := reps[id]
-		if !ok || seen[fp] {
+		vs = append(vs, v)
+		perDir[v.t.Dir]++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var out []IdentifyTarget
+	seen := map[string]bool{}
+	for _, v := range vs {
+		rep, ok := reps[v.id]
+		if !ok || seen[rep.fingerprint] {
 			continue
 		}
-		seen[fp] = true
-		t.Fingerprint, t.NFOs, t.Current = fp, nfos[t.Dir], current[fp]
+		seen[rep.fingerprint] = true
+		t := v.t
+		t.Fingerprint, t.Current = rep.fingerprint, current[rep.fingerprint]
+		t.NFOs = nfosFor(nfos[t.Dir], perDir[t.Dir] > 1, rep.path)
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // SaveIdentifications stores matcher results in one transaction. A row that
@@ -204,23 +268,19 @@ func (s *Store) SaveIdentifications(ids []Identification) error {
 	return tx.Commit()
 }
 
-// SetCorrection records the user's decision for a fingerprint: a movie
-// (StatusManual), not a movie (StatusIgnored) or an extra of a movie
+// SetCorrection records the user's decision for a version's fingerprint: a
+// movie (StatusManual), not a movie (StatusIgnored) or an extra of a movie
 // (StatusExtra). Candidates and query of a previous match are kept.
 func (s *Store) SetCorrection(fingerprint, status string, tmdbID int) error {
 	if status != StatusManual && status != StatusIgnored && status != StatusExtra {
 		return errors.New("store: estado de corrección inválido: " + status)
 	}
-	if fingerprint == "" {
-		return ErrUnknownFingerprint
-	}
-	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM files WHERE fingerprint = ? LIMIT 1`, fingerprint).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrUnknownFingerprint
-	}
+	ok, err := s.IsRepresentative(fingerprint)
 	if err != nil {
 		return err
+	}
+	if !ok {
+		return ErrUnknownFingerprint
 	}
 	_, err = s.db.Exec(`INSERT INTO identifications (fingerprint, status, tmdb_id, updated_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT(fingerprint) DO UPDATE SET status = excluded.status, tmdb_id = excluded.tmdb_id,
@@ -275,9 +335,9 @@ func (s *Store) attachIdentity(out []VersionView, pos map[int64]int) error {
 	if err != nil {
 		return err
 	}
-	for id, fp := range reps {
+	for id, r := range reps {
 		if i, ok := pos[id]; ok {
-			out[i].Fingerprint = fp
+			out[i].Fingerprint = r.fingerprint
 		}
 	}
 	if !s.hasIdentity {

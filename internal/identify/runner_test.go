@@ -243,8 +243,14 @@ func TestRunBadTokenAndNoToken(t *testing.T) {
 		t.Fatalf("state %s scheduled %v", r.Status().State, scheduled)
 	}
 	r.TMDB = nil
+	if st := r.Status().State; st != StateNoToken {
+		t.Fatalf("no token before running: %s", st)
+	}
 	if err := r.Run(context.Background()); err != nil || r.Status().State != StateNoToken {
 		t.Fatalf("no token: %v %s", err, r.Status().State)
+	}
+	if err := r.Adopt(context.Background(), 7857); !errors.Is(err, ErrNoToken) {
+		t.Fatalf("adopt without token: %v", err)
 	}
 }
 

@@ -136,13 +136,15 @@ func (s *Store) queryMovies(q string, args ...any) ([]Movie, error) {
 	return out, rows.Err()
 }
 
-// MoviesToEnrich returns the TMDB ids that identifications point to and that
-// are missing from movies or were fetched in another language.
+// MoviesToEnrich returns the TMDB ids that identifications of present files
+// point to and that are missing from movies or were fetched in another
+// language. Identifications left behind by rewritten files are not followed.
 func (s *Store) MoviesToEnrich(lang string) ([]int, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT i.tmdb_id FROM identifications i
 		LEFT JOIN movies m ON m.tmdb_id = i.tmdb_id
 		WHERE i.status IN ('auto', 'manual', 'extra') AND i.tmdb_id > 0
 		  AND (m.tmdb_id IS NULL OR m.language != ?)
+		  AND EXISTS (SELECT 1 FROM files f WHERE f.fingerprint = i.fingerprint AND f.missing = 0)
 		ORDER BY i.tmdb_id`, lang)
 	if err != nil {
 		return nil, err

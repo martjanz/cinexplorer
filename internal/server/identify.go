@@ -62,7 +62,16 @@ func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON inválido", http.StatusBadRequest)
 		return
 	}
-	var err error
+	// Checked first so an unknown fingerprint costs no TMDB request.
+	known, err := s.Store.IsRepresentative(req.Fingerprint)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !known {
+		http.Error(w, store.ErrUnknownFingerprint.Error(), http.StatusNotFound)
+		return
+	}
 	switch req.Action {
 	case "movie", "extra":
 		if req.TMDBID <= 0 {
@@ -106,6 +115,8 @@ func tmdbError(w http.ResponseWriter, err error) {
 		http.Error(w, "no existe en TMDB", http.StatusNotFound)
 	case errors.Is(err, httpx.ErrOffline):
 		http.Error(w, "sin conexión con TMDB", http.StatusServiceUnavailable)
+	case errors.Is(err, identify.ErrNoToken):
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	case errors.Is(err, tmdb.ErrUnauthorized):
 		http.Error(w, err.Error(), http.StatusBadGateway)
 	default:

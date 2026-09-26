@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -78,10 +79,12 @@ func TestIdentifyErrors(t *testing.T) {
 		body string
 		want int
 	}{
-		{`{"fingerprint":"f1","action":"movie","tmdbId":5}`, http.StatusNotFound}, // unknown to TMDB
-		{`{"fingerprint":"zz","action":"ignore"}`, http.StatusNotFound},           // unknown fingerprint
-		{`{"fingerprint":"f1","action":"movie"}`, http.StatusBadRequest},          // no id
-		{`{"fingerprint":"f1","action":"delete"}`, http.StatusBadRequest},         // unknown action
+		{`{"fingerprint":"f1","action":"movie","tmdbId":5}`, http.StatusNotFound},    // unknown to TMDB
+		{`{"fingerprint":"zz","action":"ignore"}`, http.StatusNotFound},              // unknown fingerprint
+		{`{"fingerprint":"zz","action":"movie","tmdbId":7857}`, http.StatusNotFound}, // checked before TMDB
+		{`{"fingerprint":"zz","action":"reset"}`, http.StatusNotFound},
+		{`{"fingerprint":"f1","action":"movie"}`, http.StatusBadRequest},  // no id
+		{`{"fingerprint":"f1","action":"delete"}`, http.StatusBadRequest}, // unknown action
 		{`{"fingerprint":"f1","action":"ignore"}`, http.StatusNoContent},
 		{`{"fingerprint":"f1","action":"extra","tmdbId":7857}`, http.StatusNoContent},
 		{`{"fingerprint":"f1","action":"reset"}`, http.StatusNoContent},
@@ -169,5 +172,50 @@ func TestStatusIncludesIdentify(t *testing.T) {
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Identify == nil || body.Identify.State != identify.StateIdle {
 		t.Fatalf("status %s", rec.Body)
+	}
+}
+
+func TestIdentifyUnknownFingerprintSkipsTMDB(t *testing.T) {
+	s, _ := identifyServer(t)
+	post(t, s, `{"fingerprint":"zz","action":"movie","tmdbId":7857}`)
+	if _, ok, _ := s.Store.Movie(7857); ok {
+		t.Fatal("movie fetched for an unknown fingerprint")
+	}
+}
+
+func TestIdentifyWithoutToken(t *testing.T) {
+	s, _ := identifyServer(t)
+	s.Identifier.TMDB = nil
+	if code := post(t, s, `{"fingerprint":"f1","action":"movie","tmdbId":7857}`); code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d", code)
+	}
+}
+
+func TestCrossSiteRequestsRejected(t *testing.T) {
+	s, _ := identifyServer(t)
+	h := s.Handler()
+	get := func(url, site, mode string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", url, nil)
+		req.Host = "127.0.0.1:8080"
+		req.Header.Set("Sec-Fetch-Site", site)
+		req.Header.Set("Sec-Fetch-Mode", mode)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for _, site := range []string{"cross-site", "same-site"} {
+		if rec := get("/img/poster/7857.jpg?p=/p.jpg", site, "no-cors"); rec.Code != http.StatusForbidden {
+			t.Errorf("%s image: %d", site, rec.Code)
+		}
+		if rec := get("/api/tmdb/search?q=Amarcord", site, "cors"); rec.Code != http.StatusForbidden {
+			t.Errorf("%s search: %d", site, rec.Code)
+		}
+	}
+	if rec := get("/", "cross-site", "navigate"); rec.Code != 200 {
+		t.Errorf("navigation from a link: %d", rec.Code)
+	}
+	rec := get("/api/versions", "same-origin", "cors")
+	if rec.Code != 200 || rec.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
+		t.Errorf("same origin: %d %q", rec.Code, rec.Header().Get("Cross-Origin-Resource-Policy"))
 	}
 }
