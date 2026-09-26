@@ -4274,7 +4274,7 @@ git commit -m "test: end-to-end smoke test of a first start"
 - Test: `web/src/lib/router.test.js`
 - Generated: `web/package-lock.json`, `internal/server/dist/` (build)
 
-Spec §3. Vite compila `web/` a `internal/server/dist/` (reemplaza la página mínima). El `.gitignore` tenía `dist/`, que también ignoraba `internal/server/dist/`: pasa a `/dist/` (la salida de `scripts/build.sh`) y suma `node_modules/`. `.gitattributes` evita que Git convierta los finales de línea del build, para que sea idéntico en Windows y en Linux. La CI suma un job `web` que corre los tests, compila y falla si el build commiteado no coincide con `web/`. Arranca también la primera pieza de lógica pura: el router (`resolve` ruta → pantalla, y `appLink`, que decide si un clic en un enlace navega dentro de la app).
+Spec §3. Vite compila `web/` a `internal/server/dist/` (reemplaza la página mínima). El `.gitignore` tenía `dist/`, que también ignoraba `internal/server/dist/`: pasa a `/dist/` (la salida de `scripts/build.sh`) y suma `node_modules/`. `.gitattributes` evita que Git convierta los finales de línea del build y fija LF en las fuentes de `web/` (el repo se usa con `core.autocrlf`): así un build en Windows coincide byte a byte con el de la CI en Linux. La CI suma un job `web` que corre los tests, compila y falla si el build commiteado no coincide con `web/`. Arranca también la primera pieza de lógica pura: el router (`resolve` ruta → pantalla, y `appLink`, que decide si un clic en un enlace navega dentro de la app).
 
 `App.svelte` es provisorio en esta tarea: la versión completa llega en la Task 14.
 
@@ -4304,6 +4304,8 @@ Crear `.gitattributes`:
 ```text
 # The web build is committed and embedded: keep it byte for byte on every OS.
 internal/server/dist/** -text
+# Its sources too (LF everywhere), so that a build on Windows matches the one in CI.
+web/** text eol=lf
 ```
 
 En `.github/workflows/ci.yml`, reemplazá:

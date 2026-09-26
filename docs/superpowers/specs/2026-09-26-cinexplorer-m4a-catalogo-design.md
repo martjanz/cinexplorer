@@ -48,7 +48,7 @@ internal/server/dist/         salida del build (commiteada, embebida)
 
 - `vite.config.js`: `build.outDir = ../internal/server/dist`, `emptyOutDir: true`; en desarrollo, proxy de `/api` e `/img` a `http://127.0.0.1:8080`. Flujo de desarrollo: `go run ./cmd/cinexplorer -port 8080 -no-browser` + `npm run dev` en `web/`.
 - Tipografía: `@fontsource-variable/inter`, empaquetada en el build (sin red).
-- `.gitattributes`: `internal/server/dist/** -text`, para que el build sea idéntico byte a byte en Windows y Linux.
+- `.gitattributes`: `internal/server/dist/** -text` y `web/** text eol=lf`, para que el build sea idéntico byte a byte en Windows (el repo se usa con `core.autocrlf`) y en Linux.
 - `go:embed dist` exige que la carpeta exista y no esté vacía; como la salida está commiteada (con `index.html`), siempre se cumple.
 - `scripts/build.sh`: `(cd web && npm ci && npm test && npm run build)` antes de compilar los binarios.
 - CI: job `web` en `ubuntu-latest` con Node 24: `npm ci`, `npm test`, `npm run build`, y falla si `git status --porcelain internal/server/dist` no está vacío. Los jobs de Go de las tres plataformas no cambian.
