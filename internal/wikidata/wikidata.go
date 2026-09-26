@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,8 +63,8 @@ func (c *Client) Lookup(ctx context.Context, ids []int, lang string) (map[int]En
 		values[i] = strconv.Quote(strconv.Itoa(id))
 	}
 	labelLang := strings.ToLower(strings.SplitN(lang, "-", 2)[0])
-	if labelLang == "" {
-		labelLang = "en"
+	if !langRe.MatchString(labelLang) {
+		labelLang = "en" // it goes into the query text: only plain codes
 	}
 	q := `SELECT ?tmdb ?item ?imdb ?countryIso ?directorLabel ?date WHERE {
   VALUES ?tmdb { ` + strings.Join(values, " ") + ` }
@@ -80,6 +81,9 @@ func (c *Client) Lookup(ctx context.Context, ids []int, lang string) (map[int]En
 	}
 	return parse(body)
 }
+
+// langRe is an ISO 639 language code, the only shape allowed in the query.
+var langRe = regexp.MustCompile(`^[a-z]{2,3}$`)
 
 type binding map[string]struct {
 	Value string `json:"value"`

@@ -61,3 +61,23 @@ func TestParseSkipsUnlabelledDirectors(t *testing.T) {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 }
+
+func TestLookupSanitizesLanguage(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query().Get("query")
+		w.Write([]byte(`{"results":{"bindings":[]}}`))
+	}))
+	defer srv.Close()
+	c := New("test")
+	c.Endpoint = srv.URL
+	c.HTTP.Limiter = nil
+	for lang, want := range map[string]string{"pt-BR": `"pt,en"`, `x" } #`: `"en,en"`, "": `"en,en"`} {
+		if _, err := c.Lookup(context.Background(), []int{1}, lang); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, `wikibase:language `+want) {
+			t.Errorf("lang %q: query %s", lang, got)
+		}
+	}
+}
