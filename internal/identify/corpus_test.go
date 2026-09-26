@@ -59,6 +59,7 @@ var corpus = []struct {
 	{"1900 (Novecento) (1976) [mkvonly]", 3870},
 	{"Diarios de motocicleta", 1653},
 	{"Grey Gardens (1975) 1080p.BluRay.H264.AAC-RARBG", 17346},
+	{"Deep Throat (1972)", 5853},
 }
 
 func TestCorpus(t *testing.T) {

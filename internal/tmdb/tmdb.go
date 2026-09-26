@@ -108,9 +108,12 @@ func year(date string) int {
 	return y
 }
 
-// SearchMovie searches by title; year 0 means any year.
+// SearchMovie searches by title; year 0 means any year. Adult titles are
+// included: the collection being catalogued is the user's own, not a public
+// listing, so TMDB's default filter (which would hide a real owned title
+// like "Deep Throat") does not apply here.
 func (c *Client) SearchMovie(ctx context.Context, query string, year int, lang string) ([]Result, error) {
-	v := url.Values{"query": {query}, "language": {lang}, "include_adult": {"false"}}
+	v := url.Values{"query": {query}, "language": {lang}, "include_adult": {"true"}}
 	if year > 0 {
 		v.Set("year", strconv.Itoa(year))
 	}

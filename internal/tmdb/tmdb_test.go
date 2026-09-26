@@ -29,6 +29,11 @@ func TestSearchMovie(t *testing.T) {
 		if q.Get("query") != "Amarcord" || q.Get("year") != "1973" || q.Get("language") != "es-ES" {
 			t.Errorf("query %v", q)
 		}
+		// The collection is the user's own, so adult titles (e.g. "Deep
+		// Throat", TMDB id 5853) must not be filtered out of results.
+		if q.Get("include_adult") != "true" {
+			t.Errorf("include_adult %v", q)
+		}
 		w.Write([]byte(`{"page":1,"results":[{"id":7857,"title":"Amarcord","original_title":"Amarcord","release_date":"1973-12-18","poster_path":"/a.jpg"}]}`))
 	})
 	rs, err := c.SearchMovie(context.Background(), "Amarcord", 1973, "es-ES")
