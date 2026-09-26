@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -23,6 +24,9 @@ type Store struct {
 	// later stages may not exist.
 	hasMedia    bool
 	hasIdentity bool
+	// hasFirstSeen is false for a catalog from before files.first_seen
+	// opened read-only.
+	hasFirstSeen bool
 }
 
 type FileRow struct {
@@ -36,6 +40,7 @@ type FileRow struct {
 
 type FileView struct {
 	Path    string `json:"path"`
+	Size    int64  `json:"size"`
 	Role    string `json:"role"`
 	Part    int    `json:"part"`
 	Lang    string `json:"lang"`
@@ -57,6 +62,7 @@ type VersionView struct {
 	Parts      int        `json:"parts"`
 	SubLangs   string     `json:"subLangs"`
 	Files      []FileView `json:"files"`
+	Added      int64      `json:"added"` // unix ms: first_seen of its earliest present main file
 
 	// Technical data read from the files (zero when not probed yet).
 	DurationMs int64         `json:"durationMs"`
@@ -123,6 +129,10 @@ func openDB(dsn string, migrate bool) (*Store, error) {
 			db.Close()
 			return nil, err
 		}
+		if err := addFirstSeen(db); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	s := &Store{db: db}
 	for name, dst := range map[string]*bool{"media": &s.hasMedia, "identifications": &s.hasIdentity} {
@@ -131,7 +141,33 @@ func openDB(dsn string, migrate bool) (*Store, error) {
 			return nil, err
 		}
 	}
+	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info('files') WHERE name = 'first_seen'`).Scan(&s.hasFirstSeen); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// addFirstSeen adds files.first_seen to a catalog from before it existed
+// (CREATE TABLE IF NOT EXISTS does not add columns). The files already
+// catalogued get their modification time.
+func addFirstSeen(db *sql.DB) error {
+	var has bool
+	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info('files') WHERE name = 'first_seen'`).Scan(&has); err != nil || has {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`ALTER TABLE files ADD COLUMN first_seen INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE files SET first_seen = mtime`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -164,16 +200,20 @@ func (s *Store) SyncFiles(seen []FileRow, scannedRoots []string) error {
 	}
 	defer tx.Rollback()
 
-	up, err := tx.Prepare(`INSERT INTO files (path, size, mtime, fingerprint, kind, missing) VALUES (?, ?, ?, ?, ?, 0)
+	// A new path gets the date its content was first seen under any path
+	// (a moved file is not new), or now. Known paths keep theirs.
+	up, err := tx.Prepare(`INSERT INTO files (path, size, mtime, fingerprint, kind, missing, first_seen)
+		VALUES (?1, ?2, ?3, ?4, ?5, 0, COALESCE((SELECT MIN(first_seen) FROM files WHERE fingerprint = ?4 AND ?4 != ''), ?6))
 		ON CONFLICT(path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime,
 		fingerprint = excluded.fingerprint, kind = excluded.kind, missing = 0`)
 	if err != nil {
 		return err
 	}
 	defer up.Close()
+	now := time.Now().UnixMilli()
 	present := make(map[string]bool, len(seen))
 	for _, f := range seen {
-		if _, err := up.Exec(f.Path, f.Size, f.MTime, f.Fingerprint, f.Kind); err != nil {
+		if _, err := up.Exec(f.Path, f.Size, f.MTime, f.Fingerprint, f.Kind, now); err != nil {
 			return err
 		}
 		present[f.Path] = true
@@ -303,7 +343,11 @@ func (s *Store) versions(tx querier) ([]VersionView, error) {
 		return nil, err
 	}
 
-	frows, err := tx.Query(`SELECT version_id, path, role, part, lang, missing FROM files
+	firstSeen := "0"
+	if s.hasFirstSeen {
+		firstSeen = "first_seen"
+	}
+	frows, err := tx.Query(`SELECT version_id, path, size, role, part, lang, missing, ` + firstSeen + ` FROM files
 		WHERE version_id IS NOT NULL
 		ORDER BY version_id, CASE role WHEN 'main' THEN 0 WHEN 'subtitle' THEN 1 ELSE 2 END, part, path`)
 	if err != nil {
@@ -311,13 +355,17 @@ func (s *Store) versions(tx querier) ([]VersionView, error) {
 	}
 	defer frows.Close()
 	for frows.Next() {
-		var id int64
+		var id, seen int64
 		var f FileView
-		if err := frows.Scan(&id, &f.Path, &f.Role, &f.Part, &f.Lang, &f.Missing); err != nil {
+		if err := frows.Scan(&id, &f.Path, &f.Size, &f.Role, &f.Part, &f.Lang, &f.Missing, &seen); err != nil {
 			return nil, err
 		}
 		if i, ok := pos[id]; ok {
-			out[i].Files = append(out[i].Files, f)
+			v := &out[i]
+			v.Files = append(v.Files, f)
+			if f.Role == "main" && !f.Missing && (v.Added == 0 || seen < v.Added) {
+				v.Added = seen
+			}
 		}
 	}
 	if err := frows.Err(); err != nil {

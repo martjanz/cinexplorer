@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS files (
   version_id  INTEGER REFERENCES versions(id) ON DELETE SET NULL,
   role        TEXT    NOT NULL DEFAULT '',
   part        INTEGER NOT NULL DEFAULT 0,
-  lang        TEXT    NOT NULL DEFAULT ''
+  lang        TEXT    NOT NULL DEFAULT '',
+  first_seen  INTEGER NOT NULL DEFAULT 0    -- unix milliseconds: when the content was first catalogued
 );
 
 CREATE INDEX IF NOT EXISTS files_fingerprint ON files(fingerprint);
