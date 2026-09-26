@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"cinexplorer/internal/appdir"
+	"cinexplorer/internal/identify"
+	"cinexplorer/internal/images"
 	"cinexplorer/internal/scan"
 	"cinexplorer/internal/store"
 )
@@ -28,6 +30,11 @@ type Server struct {
 	ReadOnly bool
 	Opener   func(target string) error
 	Revealer func(target string) error
+
+	TMDB       identify.API     // nil without a TMDB token
+	Identifier *identify.Runner // nil in read-only mode
+	Images     *images.Cache
+	Language   string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -43,6 +50,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/scan", jsonOnly(s.rescan))
 	mux.HandleFunc("POST /api/open", jsonOnly(func(w http.ResponseWriter, r *http.Request) { s.withFile(w, r, s.Opener) }))
 	mux.HandleFunc("POST /api/reveal", jsonOnly(func(w http.ResponseWriter, r *http.Request) { s.withFile(w, r, s.Revealer) }))
+	mux.HandleFunc("GET /api/unidentified", s.unidentified)
+	mux.HandleFunc("GET /api/tmdb/search", s.search)
+	mux.HandleFunc("POST /api/identify", jsonOnly(s.identify))
+	mux.HandleFunc("GET /img/{kind}/{file}", s.image)
 	return localOnly(mux)
 }
 
@@ -78,7 +89,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if s.Scanner != nil {
 		st = s.Scanner.Status()
 	}
-	writeJSON(w, map[string]any{"readOnly": s.ReadOnly, "scan": st})
+	var id *identify.Status
+	if s.Identifier != nil {
+		st := s.Identifier.Status()
+		id = &st
+	}
+	writeJSON(w, map[string]any{"readOnly": s.ReadOnly, "scan": st, "identify": id})
 }
 
 func (s *Server) versions(w http.ResponseWriter, r *http.Request) {
