@@ -123,3 +123,15 @@ func TestLimiter(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+func TestGetRejectsOversizedBody(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Write(make([]byte, maxBody+1))
+	}))
+	defer srv.Close()
+	if _, err := fastClient().Get(context.Background(), srv.URL); !errors.Is(err, ErrTooLarge) || calls.Load() != 1 {
+		t.Fatalf("err %v calls %d", err, calls.Load())
+	}
+}

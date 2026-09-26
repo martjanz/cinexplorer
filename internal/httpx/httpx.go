@@ -18,6 +18,9 @@ import (
 // timeouts, or repeated 429/5xx): the work should be retried later.
 var ErrOffline = errors.New("sin conexión")
 
+// ErrTooLarge means a response exceeded the size limit; it is not retried.
+var ErrTooLarge = errors.New("respuesta demasiado grande")
+
 // StatusError is a final (non-retried) HTTP error status.
 type StatusError struct {
 	Code int
@@ -122,7 +125,7 @@ func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
 			return nil, ctx.Err()
 		}
 		var se *StatusError
-		if errors.As(err, &se) {
+		if errors.As(err, &se) || errors.Is(err, ErrTooLarge) {
 			return nil, err
 		}
 		last = err
@@ -151,13 +154,16 @@ func (c *Client) once(ctx context.Context, hc *http.Client, url string) ([]byte,
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 		secs, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
 		return nil, &retryAfter{code: resp.StatusCode, d: time.Duration(secs) * time.Second}
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		return nil, &StatusError{Code: resp.StatusCode, URL: url}
+	}
+	if len(body) > maxBody {
+		return nil, fmt.Errorf("%w: %s", ErrTooLarge, url)
 	}
 	return body, err
 }
