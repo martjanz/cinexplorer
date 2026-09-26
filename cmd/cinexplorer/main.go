@@ -15,11 +15,18 @@ import (
 
 	"cinexplorer/internal/appdir"
 	"cinexplorer/internal/config"
+	"cinexplorer/internal/identify"
+	"cinexplorer/internal/images"
 	"cinexplorer/internal/platform"
 	"cinexplorer/internal/scan"
 	"cinexplorer/internal/server"
 	"cinexplorer/internal/store"
+	"cinexplorer/internal/tmdb"
+	"cinexplorer/internal/wikidata"
 )
+
+// version identifies the build to Wikidata (User-Agent).
+const version = "0.3"
 
 func main() {
 	dir := flag.String("dir", os.Getenv("CINEXPLORER_DIR"), "directorio de la app (por defecto, el del ejecutable)")
@@ -54,11 +61,25 @@ func run(dirOverride string, port int, browser bool) error {
 	}
 	defer st.Close()
 
-	srv := &server.Server{AppDir: appDir, Store: st, ReadOnly: readOnly, Opener: platform.Open, Revealer: platform.Reveal}
+	srv := &server.Server{AppDir: appDir, Store: st, ReadOnly: readOnly, Opener: platform.Open, Revealer: platform.Reveal,
+		Language: cfg.Language, Images: &images.Cache{Dir: filepath.Join(appDir, "cache"), ReadOnly: readOnly}}
+	var api *tmdb.Client
+	if cfg.TMDBToken != "" {
+		api = tmdb.New(cfg.TMDBToken)
+		srv.TMDB, srv.Images.Fetch = api, api
+	} else {
+		log.Print("sin tmdbToken en config.json: no se identifican películas")
+	}
 	if readOnly {
 		log.Print("el directorio de la app no es escribible: modo consulta")
 	} else {
-		srv.Scanner = &scan.Scanner{AppDir: appDir, Roots: cfg.Roots, Store: st}
+		runner := &identify.Runner{AppDir: appDir, Store: st, Wikidata: wikidata.New(version), Images: srv.Images,
+			Language: cfg.Language, Prefetch: cfg.ImagePrefetch}
+		if api != nil {
+			runner.TMDB = api // only when set: a nil *tmdb.Client in the interface would not read as "no token"
+		}
+		srv.Identifier = runner
+		srv.Scanner = &scan.Scanner{AppDir: appDir, Roots: cfg.Roots, Store: st, OnDone: runner.Trigger}
 		go func() {
 			if err := srv.Scanner.Run(context.Background()); err != nil {
 				log.Printf("escaneo: %v", err)
