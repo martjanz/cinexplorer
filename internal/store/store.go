@@ -17,6 +17,9 @@ var schema string
 
 type Store struct {
 	db *sql.DB
+	// hasMedia is false for a stage-1 catalog opened read-only: the schema
+	// only runs on writable opens, so the media table may not exist.
+	hasMedia bool
 }
 
 type FileRow struct {
@@ -88,7 +91,12 @@ func openDB(dsn string, migrate bool) (*Store, error) {
 			return nil, err
 		}
 	}
-	return &Store{db: db}, nil
+	s := &Store{db: db}
+	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'media'`).Scan(&s.hasMedia); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -69,8 +70,11 @@ func TestPendingProbes(t *testing.T) {
 		t.Fatalf("pending = %v, want %v", got, want)
 	}
 
-	ts, _ := s.PendingProbes()
-	err := s.SaveProbes([]ProbeResult{
+	ts, err := s.PendingProbes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.SaveProbes([]ProbeResult{
 		{FileID: ts[0].FileID, Size: ts[0].Size, MTime: ts[0].MTime, Info: probe.Info{Height: 1080}},
 		{FileID: ts[1].FileID, Size: ts[1].Size, MTime: ts[1].MTime, Err: "probe: invalid header: truncated file"},
 	})
@@ -93,7 +97,10 @@ func TestPendingProbes(t *testing.T) {
 func TestSaveProbesUpserts(t *testing.T) {
 	s := open(t)
 	mediaLibrary(t, s)
-	ts, _ := s.PendingProbes()
+	ts, err := s.PendingProbes()
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := ProbeResult{FileID: ts[0].FileID, Size: 100, MTime: 1, Info: probe.Info{Height: 720}}
 	if err := s.SaveProbes([]ProbeResult{r}); err != nil {
 		t.Fatal(err)
@@ -103,8 +110,37 @@ func TestSaveProbesUpserts(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n, h int
-	s.db.QueryRow(`SELECT COUNT(*), MAX(height) FROM media`).Scan(&n, &h)
+	if err := s.db.QueryRow(`SELECT COUNT(*), MAX(height) FROM media`).Scan(&n, &h); err != nil {
+		t.Fatal(err)
+	}
 	if n != 1 || h != 1080 {
 		t.Fatalf("rows=%d height=%d", n, h)
+	}
+}
+
+func TestReadOnlyStage1Catalog(t *testing.T) {
+	// A catalog written by stage 1 has no media table, and a read-only open
+	// does not run the schema: listing versions must still work.
+	path := filepath.Join(t.TempDir(), "cinexplorer.db")
+	s, err := Open(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaLibrary(t, s)
+	if _, err := s.db.Exec(`DROP TABLE media`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	ro, err := Open(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	if ts, err := ro.PendingProbes(); err != nil || len(ts) != 0 {
+		t.Fatalf("pending %v, %v", ts, err)
+	}
+	if vs, err := ro.Versions(); err != nil || len(vs) != 4 {
+		t.Fatalf("versions %d, %v", len(vs), err)
 	}
 }

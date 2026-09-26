@@ -28,6 +28,9 @@ type ProbeResult struct {
 // PendingProbes returns the present main video files, and the title set IFOs
 // of DVD versions, that have never been probed or changed since.
 func (s *Store) PendingProbes() ([]ProbeTarget, error) {
+	if !s.hasMedia {
+		return nil, nil
+	}
 	rows, err := s.db.Query(`SELECT f.id, f.path, f.size, f.mtime FROM files f
 		LEFT JOIN media m ON m.file_id = f.id
 		WHERE f.missing = 0 AND f.role = 'main'
