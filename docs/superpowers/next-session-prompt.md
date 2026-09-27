@@ -4,19 +4,17 @@ Copiá y pegá esto como primer mensaje:
 
 ---
 
-Estoy retomando el proyecto **Cinexplorer** (repo: https://github.com/martjanz/cinexplorer). Las etapas 1 a 4a están en `main` (la 4a: interfaz Svelte embebida con Explorar, Ficha y Revisar). Esta sesión es para **diseñar y planificar la Etapa 4b: Descubrimiento y primer uso**: Inicio estilo MUBI, búsqueda instantánea con FTS5 y asistente de primer uso (raíces, token de TMDB, idioma).
+Estoy retomando el proyecto **Cinexplorer** (repo: https://github.com/martjanz/cinexplorer). Las etapas 1 a 4a están en `main`. La Etapa 4b (Descubrimiento y primer uso: Inicio estilo MUBI, búsqueda instantánea con FTS5, asistente de primer uso, Ajustes e idioma es-AR) ya tiene spec y plan. Esta sesión es para **implementarla**.
 
 Leé antes de arrancar:
-- `docs/superpowers/specs/2026-09-25-cinexplorer-design.md` — spec general, en especial §5.1 (Inicio), §5.6 (búsqueda) y §5.7 (primer uso).
-- `docs/superpowers/specs/2026-09-26-cinexplorer-m4a-catalogo-design.md` — spec de la 4a; §11 tiene los pendientes, incluidos los menores de la revisión final.
-- `docs/superpowers/plans/2026-09-26-cinexplorer-m4a-catalogo.md` — el plan de la 4a, como referencia de formato (código completo por tarea, generado desde un prototipo probado).
+- `docs/superpowers/specs/2026-09-27-cinexplorer-m4b-descubrimiento-design.md` — spec de la 4b.
+- `docs/superpowers/plans/2026-09-27-cinexplorer-m4b-descubrimiento.md` — el plan: 16 tareas con el código completo, generado desde un prototipo probado y validado aplicándolo sobre un árbol limpio.
 - `README.md` — cómo se compila y se prueba; el frontend necesita Node ≥ 22.12 (en esta máquina, `export PATH="/c/Users/martin/AppData/Roaming/nvm/v24.21.0:$PATH"` antes de `npm`).
 
 Corré `go test ./...` y `cd web && npm test` para confirmar que todo sigue en verde.
 
-Flujo (el mismo de las etapas anteriores):
-1. **superpowers:brainstorming** para el diseño de la 4b y spec en `docs/superpowers/specs/`.
-2. Prototipo probado (incluida una prueba real con token sobre `D:\cine\1970s`) y **superpowers:writing-plans** con el código completo, validado aplicándolo sobre un árbol limpio.
-3. La implementación va en una sesión aparte (subagent-driven-development, implementador haiku, revisores de spec y de calidad por tarea).
+Flujo: **superpowers:subagent-driven-development** sobre el plan (implementador haiku, revisores de spec y de calidad por tarea). El código del plan se copia tal cual; si algo no compila o un test no da lo esperado, es un error del plan: se reporta en lugar de improvisar.
+
+Pendiente de la sesión de diseño: el prototipo no pudo probarse contra TMDB (sin red). La **prueba real** de la Task 16 (token real, traducciones es-AR sobre películas no argentinas, forma de `/movie/{id}/translations`) es la primera vez que eso se comprueba: si falla, corregir antes del merge.
 
 ---

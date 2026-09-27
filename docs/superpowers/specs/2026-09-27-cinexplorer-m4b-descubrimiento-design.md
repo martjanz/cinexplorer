@@ -1,7 +1,7 @@
 # Cinexplorer — Etapa 4b: Descubrimiento y primer uso — Diseño
 
 Fecha: 2026-09-27
-Estado: aprobado en brainstorming, pendiente de revisión escrita y de prototipo
+Estado: aprobado; ajustado tras prototipar (`Engine.Apply`, caché de la búsqueda, verificación del token en un intento, `MarkOutsideRoots` después de sincronizar, barra en pantallas chicas)
 Spec general: `2026-09-25-cinexplorer-design.md` (§2.2, §5.1, §5.6, §5.7)
 Etapa anterior: `2026-09-26-cinexplorer-m4a-catalogo-design.md` (§11 pendientes)
 
@@ -41,12 +41,13 @@ Completar la interfaz con lo que falta para descubrir la colección y para arran
 Toma el armado que hoy hace `setup()` en `cmd/cinexplorer`:
 
 ```go
-// Base is what does not depend on config.json.
-type Base struct {
+// Engine holds the current Runtime; its fields do not depend on config.json.
+type Engine struct {
     AppDir   string
     Store    *store.Store
     ReadOnly bool
     Wikidata identify.Wikidata
+    // current atomic.Pointer[Runtime], pending atomic.Bool, mu (serializa Apply)
 }
 
 // Runtime is everything built from one config.json.
@@ -58,30 +59,35 @@ type Runtime struct {
     Identifier *identify.Runner // nil en modo consulta
 }
 
-func Start(b Base, cfg config.Config) *Runtime // arma y, si es escribible, lanza un escaneo
-func (r *Runtime) Stop()                         // cancela escaneo e identificación y espera
+func (e *Engine) Start(cfg config.Config, setupPending bool) // primer Runtime; escanea salvo setupPending
+func (e *Engine) Current() *Runtime
+func (e *Engine) SetupPending() bool
+func (e *Engine) Apply(cfg config.Config) error // guarda, detiene el actual, arma otro, escanea
+func (e *Engine) Use(rt *Runtime)                // tests: pone un Runtime tal cual
+func (rt *Runtime) Scan()                         // escaneo en segundo plano con el contexto del Runtime
+func (rt *Runtime) Stop()                         // cancela escaneo e identificación y espera
 ```
 
-- `Start` no escanea si `b.ReadOnly`.
-- `Stop` cancela el contexto propio del `Runtime` (el escaneo y el `Runner` lo usan en lugar de `context.Background()`), cancela el reintento pendiente del `Runner` y espera a que el escaneo y la corrida en curso terminen. Lo guardado hasta ese momento queda (el escáner ya aborta sin marcar faltantes al cancelarse; el `Runner` guarda el lote en curso).
-- `identify.Runner` suma un contexto base y `Close()`: `Trigger` y los reintentos lo usan; después de `Close`, `Trigger` no hace nada.
+- `Apply` devuelve `ErrReadOnly` en modo consulta. No valida: eso lo hace el servidor (§4.3).
+- `Stop` cancela el contexto propio del `Runtime` (el que usa `Scan`), cierra el `Runner` y espera a que el escaneo termine. Lo guardado hasta ese momento queda (el escáner aborta sin marcar faltantes al cancelarse; el `Runner` guarda el lote en curso). Después de `Stop`, `Scan` no hace nada.
+- `identify.Runner` suma `Close()`: cancela la corrida en segundo plano y el reintento pendiente, y espera; después, `Trigger` no hace nada. Las corridas de `Trigger` usan un contexto propio del `Runner` en lugar de `context.Background()`.
 - `scan.Scanner.OnDone` sigue llamando a `Runner.Trigger` del mismo `Runtime`.
 
 ### 3.2 Servidor
 
-- `Server` pierde `Roots`, `Scanner`, `TMDB`, `Identifier`, `Images` y `Language`; los lee de `s.rt()` (un `atomic.Pointer[engine.Runtime]`), **una vez por pedido**.
-- `Server.Apply(cfg) error`: valida (§4.3), guarda `config.json`, `old.Stop()`, `engine.Start(nuevo)`, intercambia el puntero y limpia `setupPending`. Las llamadas a `Apply` se serializan con un mutex; mientras una corre, los pedidos siguen viendo el `Runtime` viejo (ya detenido) o el nuevo, nunca uno a medio armar.
-- `Server.SetupPending bool` (atómico): verdadero cuando `config.json` no existía al arrancar y la carpeta es escribible.
+- `Server` pierde `Roots`, `Scanner`, `TMDB`, `Identifier`, `Images` y `Language`, y suma `Engine *engine.Engine`: los handlers leen `s.rt()` (`Engine.Current()`) **una vez por pedido**. Mientras `Apply` corre, un pedido ve el `Runtime` viejo (ya detenido) o el nuevo, nunca uno a medio armar.
+- `POST /api/scan` llama a `Runtime.Scan`.
+- `Server.VerifyToken` permite a los tests reemplazar la verificación del token (§4.3).
 
 ### 3.3 Arranque (`cmd/cinexplorer`)
 
-- `config.Load` devuelve `created=true` si falta el archivo: **ya no se guarda** en el arranque. Con la carpeta escribible, `setup` arma el `Runtime` con esa configuración propuesta **sin lanzar el escaneo** y marca `SetupPending`. En modo consulta, se usa la propuesta en memoria como hoy.
+- `config.Load` devuelve `created=true` si falta el archivo: **ya no se guarda** en el arranque. Con la carpeta escribible, `setup` hace `Engine.Start(propuesta, true)`: arma el `Runtime` **sin lanzar el escaneo** y marca `setupPending`. En modo consulta, se usa la propuesta en memoria como hoy. La función que cierra el catálogo detiene antes el `Runtime`.
 - Si el usuario cierra la app sin completar el asistente, el próximo arranque vuelve a mostrarlo.
 - Con `-no-browser` y sin `config.json` la app espera el asistente (se informa en el log con la URL).
 
 ### 3.4 Raíces quitadas
 
-`store.MarkOutsideRoots(roots []string) error`: marca `missing = 1` en los archivos presentes que no están bajo ninguna de las raíces configuradas. El escáner lo llama al empezar cada corrida, con **todas** las raíces configuradas (incluidas las no disponibles, que así no se tocan). Comparación con `underAny`, igual que `SyncFiles`.
+`store.MarkOutsideRoots(roots []string) error`: marca `missing = 1` en los archivos presentes que no están bajo ninguna de las raíces configuradas (limpias con `path.Clean`, así `./../cine/` vale como `../cine`). El escáner lo llama justo después de `SyncFiles`, con **todas** las raíces configuradas (incluidas las no disponibles, que así no se tocan).
 
 ## 4. Configuración: primer uso y Ajustes
 
@@ -111,7 +117,7 @@ func (r *Runtime) Stop()                         // cancela escaneo e identifica
 ### 4.3 Validación
 
 - **Raíz**: ruta absoluta o relativa a la carpeta de la app; debe existir y ser carpeta; no puede ser la carpeta de la app, ni contenerla, ni estar dentro de ella; no puede contener ni estar contenida en otra raíz de la lista. Se guarda en forma de catálogo (`appdir.Rel`, `/`), limpia con `path.Clean`. Una raíz ya guardada que no está disponible se acepta tal cual (disco desconectado).
-- **Token**: se verifica con un pedido que el cliente ya hace (`Movie(ctx, 550, "en-US")`, *Fight Club*): `ErrUnauthorized` → inválido; `ErrOffline` → sin verificar; cualquier otro resultado (incluido 404) → válido. `PUT` no exige verificarlo.
+- **Token**: se verifica con un pedido que el cliente ya hace (`Movie(ctx, 550, "en-US")`, *Fight Club*), **en un solo intento** (con los reintentos del cliente, sin red la respuesta tardaba 15 s) y con 15 s de límite: `ErrUnauthorized` → inválido; `ErrOffline` o límite vencido → sin verificar; cualquier otro resultado (incluido 404) → válido. `PUT` no exige verificarlo.
 - **Idioma** e **imagePrefetch**: de las listas de §4.1.
 - Lista de raíces vacía: 400 ("elegí al menos una carpeta").
 
@@ -134,18 +140,19 @@ func (r *Runtime) Stop()                         // cancela escaneo e identifica
 ### 6.1 Índice (`internal/search`)
 
 ```go
-type Index struct { /* *sql.DB en memoria, generación indexada */ }
+type Doc struct { Key, Title, Original, Directors, Cast, Files string }
 
 func New() (*Index, error)
-func (x *Index) Refresh(gen int64, items []catalog.SearchDoc) error // reconstruye si gen cambió
-func (x *Index) Query(q string, limit int) ([]Hit, error)            // Hit: clave de ítem + rank
+func (x *Index) Refresh(changes int64, docs func() []Doc) error // reconstruye si cambió el contador
+func (x *Index) Query(q string) ([]string, error)                // claves de ítem, la mejor primero
+func Terms(q string) []string                                    // palabras plegadas (quality.Words)
 ```
 
-- Tabla `docs USING fts5(key UNINDEXED, title, original, directors, cast, files, tokenize = "unicode61 remove_diacritics 2")`.
-- `catalog.SearchDocs(snap, roots) []SearchDoc`: un documento por ítem de Explorar (las mismas reglas de §5.3 de la 4a: presentes, sin `ignored`/`extra`). Película: título, original, directores, reparto y los títulos parseados de sus versiones. Sin identificar: título parseado en `title`.
-- **Cambios**: `store.Snapshot` suma `Changes int64` = `SELECT total_changes()` leído en la misma transacción. El servidor reconstruye el índice cuando `Changes` difiere del indexado (un número distinto, no mayor: si la conexión se reabre, el contador empieza de nuevo). Un mutex evita dos reconstrucciones a la vez.
-- **Consulta**: el texto se parte en palabras (letras y dígitos Unicode); cada una va entre comillas, la última con `*` (prefijo); todas obligatorias. Menos de 2 caracteres en total → sin resultados. Orden: `bm25(docs, 0, 10, 8, 4, 1, 2)` y desempate por título normalizado.
-- **Directores**: de los ítems encontrados, los directores cuyo nombre normalizado (`quality.NormTitle`) contiene todas las palabras de la consulta (la última como prefijo), con cuántas películas del catálogo tienen. Hasta 5.
+- Tabla `docs USING fts5(key UNINDEXED, title, original, directors, cast, files, tokenize = "unicode61 remove_diacritics 2")`, en una base `:memory:` con una sola conexión.
+- `catalog.SearchDocs(snap) []search.Doc`: un documento por ítem de Explorar (las mismas reglas de §5.3 de la 4a: presentes, sin `ignored`/`extra`), en orden de título. Película: título, original, directores, reparto y los títulos parseados de sus versiones. Sin identificar: título y director parseados. `catalog.ItemKey`: `movie:<id>` o la clave de la versión.
+- **Cambios**: `store.Snapshot` suma `Changes int64` (`SELECT total_changes()` en la misma transacción) y `store.Changes()` lo lee solo, sin la instantánea. El servidor guarda los ítems y el índice y los reutiliza mientras `Changes()` no cambie: con 5.000 películas, leer la instantánea cuesta ~135 ms y una búsqueda con el catálogo quieto, 1–25 ms. Se compara por distinto, no por mayor (si la conexión se reabre, el contador empieza de nuevo).
+- **Consulta**: `Terms` (letras y dígitos, sin tildes ni mayúsculas); cada palabra entre comillas, la última con `*` (prefijo); todas obligatorias. Menos de 2 caracteres en total → sin resultados. Orden: `bm25(docs, 0, 10, 8, 4, 1, 2)` y desempate por el orden de inserción (título).
+- **Directores** (`catalog.Directors(all, found, terms, 5)`): de los ítems encontrados, los directores con id de TMDB cuyo nombre tiene todas las palabras (la última como comienzo de palabra), con cuántos ítems de todo el catálogo dirigieron. Los más prolíficos primero.
 
 ### 6.2 API
 
@@ -173,7 +180,7 @@ func (x *Index) Query(q string, limit int) ([]Hit, error)            // Hit: cla
 
 `HomeItem`: `tmdbId, title, originalTitle, year, directors (nombres), countries, backdrop, poster` (versiones de imagen). `total`: películas identificadas presentes.
 
-### 7.2 Filas (`catalog.Home(items, seed)`)
+### 7.2 Filas (`catalog.HomePage(snap, seed)`)
 
 Sobre los ítems `movie` de Explorar. Hasta 20 ítems por fila. Una fila que no llega al mínimo no aparece. El sorteo usa `math/rand/v2` con PCG sembrado con `seed`: la misma semilla da las mismas filas y el mismo orden.
 
@@ -190,8 +197,8 @@ Los `href` se arman con la misma función de facetas de Explorar (`catalog` no c
 
 ### 7.3 Interfaz
 
-- `/` pasa a ser el Inicio (antes redirigía a `/explorar`). Barra: `CINEXPLORER` · Inicio · Explorar · Revisar · ⌕ · estado · ⚙ (Ajustes).
-- Título de fila en mayúsculas según el tipo: "AGREGADAS RECIENTEMENTE", "LOS 70" (década), "DIRIGIDAS POR <NOMBRE>", "CINE DE <PAÍS>" (país con `Intl.DisplayNames`), "<GÉNERO>", "<COLECCIÓN>". A la derecha, "ver todas →".
+- `/` pasa a ser el Inicio (antes redirigía a `/explorar`). Barra: `CINEXPLORER` · Inicio · Explorar · Revisar · ⌕ · estado · ⚙ (Ajustes). En pantallas chicas se oculta "Inicio" (la marca lleva al Inicio) y se achican espacios y letra: entra en 375 px (en 320 px todavía desborda).
+- Título de fila en mayúsculas según el tipo: "AGREGADAS RECIENTEMENTE", "LOS 70" (década; de 1920 a 1990 con dos cifras, las demás completas: "LOS 2000", "LOS 1910"), "DIRIGIDAS POR <NOMBRE>", "CINE DE <PAÍS>" (país con `Intl.DisplayNames`), "<GÉNERO>", "<COLECCIÓN>". A la derecha, "ver todas →". Arriba de las filas, la cantidad de películas y ↻.
 - Fila con scroll horizontal (`scroll-snap`), flechas ‹ › en pantallas con puntero; tarjetas 16:9 de ~320 px (~70 % del ancho en pantallas chicas).
 - Tarjeta: `/img/backdrop/{id}.jpg?v=`; sin escena, el afiche con `object-fit: cover` y `filter: blur()`. Debajo, TÍTULO en mayúsculas y la línea "DIRECTOR PAÍS AÑO" (`format.creditLine`: primer director, países con nombre corto, año; lo que falte se omite). Clic → Ficha. Imágenes con `loading="lazy"`.
 - Semilla: `sessionStorage` (`cx-home-seed`), sorteada si falta; ↻ junto al título de la página la reemplaza.
@@ -200,27 +207,27 @@ Los `href` se arman con la misma función de facetas de Explorar (`catalog` no c
 
 ## 8. Asistente y Ajustes (interfaz)
 
-- `app.svelte.js` pide `/api/config` al arrancar. Con `setupPending`, cualquier ruta muestra `/bienvenida` (`replaceState`).
+- `App.svelte` lleva a `/bienvenida` (`replaceState`) cualquier ruta mientras `/api/status` diga `setupPending`; ahí no se muestra la barra. Al guardar, `settingsSaved()` apaga `setupPending` en el estado local y vuelve a pedir el estado (el sondeo normal tarda hasta 30 s).
 - **Bienvenida**, 3 pasos con "Atrás" / "Siguiente":
   1. **Carpetas**: casillas con `roots` (marcadas) y `suggested` (marcadas en el primer uso), y un campo "Agregar otra carpeta" que llama a `POST /api/config/root` y muestra el error si no valida.
   2. **Token de TMDB**: explicación corta (el *API Read Access Token*, el largo que empieza con `eyJ…`), enlace a `https://www.themoviedb.org/settings/api` (`target="_blank"`), campo, **Verificar** (✓ válido / ✕ rechazado / "no se pudo verificar, se guarda igual") y "Seguir sin token".
   3. **Idioma**: opciones con nombre (`Español (Argentina)`, `English (US)`, `Português (Brasil)`), `es-AR` elegido.
   **Empezar** → `PUT /api/config` → navega a `/`.
-- **Ajustes** (`/ajustes`): las cuatro secciones en una página (carpetas, token con "…a1b2" y "Cambiar"/"Quitar", idioma con el aviso de §4.4, descarga de imágenes) y un **Guardar** que manda todo junto. En modo consulta, todo deshabilitado con el aviso.
-- Los textos que hoy dicen "en config.json" (`status.js`, Explorar vacío) pasan a enlazar a Ajustes.
+- **Ajustes** (`/ajustes`): las cuatro secciones en una página (carpetas, token con "…a1b2" y "Cambiar"/"Quitar", idioma con el aviso de §4.4, descarga de imágenes) y un **Guardar** que manda todo junto, habilitado solo si algo cambió, más **Descartar**. En modo consulta, todo deshabilitado con el aviso. En Ajustes, las carpetas hermanas que no son raíces aparecen sin marcar (en el asistente, marcadas).
+- Los textos que hoy dicen "en config.json" (`status.js`, Explorar vacío) pasan a nombrar Ajustes; `Identificar` suma "Ir a Ajustes" cuando falta el token o fue rechazado, y el panel de estado, un enlace a Ajustes.
 
 ## 9. Estructura de los cambios
 
 ```
-internal/engine/           nuevo: Base, Runtime, Start, Stop
+internal/engine/           nuevo: Engine (Start, Apply), Runtime (Scan, Stop)
 internal/search/           nuevo: índice FTS5 en memoria
-internal/catalog/          home.go (filas), search.go (SearchDocs, directores)
+internal/catalog/          home.go (HomePage), search.go (ItemKey, SearchDocs, Directors)
 internal/config/           Languages, es-AR por defecto, validación de raíces
 internal/identify/         Chain, Translations en API, Runner con contexto base y Close
 internal/tmdb/             Translations
-internal/store/            MarkOutsideRoots, Snapshot.Changes
+internal/store/            MarkOutsideRoots, Snapshot.Changes, Changes
 internal/scan/             MarkOutsideRoots al empezar
-internal/server/           Apply, rt(), config.go, search.go, home.go
+internal/server/           Engine y rt(), config.go, search.go, /api/home
 cmd/cinexplorer/           setup sin guardar config ni escanear en el primer uso
 web/src/lib/               search.js, home.js, settings.js (+ tests); format.creditLine; router
 web/src/pages/             Inicio, Buscar, Bienvenida, Ajustes
@@ -247,3 +254,5 @@ web/src/components/        Busqueda (⌕ + desplegable), FilaInicio, TarjetaEsce
 - Fila de listas del usuario en el Inicio: Etapa 5.
 - `GET /api/movies?q=` (selector "es un extra de…") podría usar el índice; queda como está.
 - Cadena de idiomas en los candidatos de Revisar (§5).
+- La barra superior desborda en pantallas de 320 px.
+- Encontrado al prototipar, anterior a esta etapa: `ReplaceVersions` reconstruye las versiones solo con las raíces recorridas, así que una raíz **desconectada** pierde sus versiones en las vistas (sus archivos no pasan a faltantes, pero no se ven), en contra de lo que dicen el README y §4.2 de la spec general.
