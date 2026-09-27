@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 type Kind string
@@ -101,7 +102,9 @@ func (c *Cache) get(ctx context.Context, kind Kind, id int, tmdbPath string, kee
 	if err == nil {
 		return b, nil
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
+	// A file where the cache directory should be reads as ENOTDIR on Unix
+	// (and as not found on Windows): the image is just not cached.
+	if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
 		return nil, err
 	}
 	if c.Fetch == nil {
