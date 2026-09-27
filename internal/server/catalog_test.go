@@ -142,8 +142,11 @@ func TestMoviesEndpoint(t *testing.T) {
 
 func TestHomeEndpoint(t *testing.T) {
 	s, _ := identifyServer(t)
-	var h catalog.Home
-	if code := getJSON(t, s, "/api/home?seed=3", &h); code != 200 || h.Total != 0 || h.Rows == nil {
+	var h struct {
+		catalog.Home
+		TileSize string
+	}
+	if code := getJSON(t, s, "/api/home?seed=3", &h); code != 200 || h.Total != 0 || h.Rows == nil || h.TileSize != "medium" {
 		t.Fatalf("%d %+v", code, h)
 	}
 	s.rt().Identifier.Adopt(context.Background(), 7857)

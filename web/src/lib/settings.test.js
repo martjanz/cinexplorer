@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addRoot, body, changed, draft, languageName } from './settings.js'
+import { addRoot, body, changed, draft, languageName, rescans } from './settings.js'
 
 const config = {
   setupPending: false,
@@ -11,6 +11,7 @@ const config = {
   language: 'es-AR',
   languages: ['es-AR', 'en-US', 'pt-BR'],
   imagePrefetch: 'none',
+  tileSize: 'medium',
 }
 
 describe('settings', () => {
@@ -24,7 +25,7 @@ describe('settings', () => {
   })
   it('keeps the token unless changed', () => {
     const d = draft(config)
-    expect(body(d)).toEqual({ roots: ['../cine'], token: null, language: 'es-AR', imagePrefetch: 'none' })
+    expect(body(d)).toEqual({ roots: ['../cine'], token: null, language: 'es-AR', imagePrefetch: 'none', tileSize: 'medium' })
     expect(changed(config, d)).toBe(false)
     expect(body({ ...d, token: ' eyJ ' }).token).toBe('eyJ')
     expect(body({ ...d, token: '' }).token).toBe('')
@@ -36,5 +37,12 @@ describe('settings', () => {
     expect(body(d).roots).toEqual(['../cine', '../cine-ordenar', '../otras'])
     expect(changed(config, d)).toBe(true)
     expect(changed(config, { ...draft(config), language: 'en-US' })).toBe(true)
+    expect(changed(config, { ...draft(config), tileSize: 'large' })).toBe(true)
+  })
+  it('scans again for anything but the card size', () => {
+    const d = draft(config)
+    expect(rescans(config, { ...d, tileSize: 'large' })).toBe(false)
+    expect(rescans(config, { ...d, tileSize: 'large', language: 'en-US' })).toBe(true)
+    expect(rescans({ ...config, setupPending: true }, { ...draft(config), tileSize: 'large' })).toBe(true)
   })
 })

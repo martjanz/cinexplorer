@@ -23,6 +23,12 @@ export const prefetchModes = [
   },
 ]
 
+export const tileSizes = [
+  { value: 'small', label: 'Chicas' },
+  { value: 'medium', label: 'Medianas' },
+  { value: 'large', label: 'Grandes' },
+]
+
 // draft is what the page edits. On first use the suggested folders come
 // checked (the assistant proposes every sibling folder); later they are
 // offered unchecked. token is null while the saved one is kept.
@@ -31,7 +37,7 @@ export function draft(config) {
     ...config.roots.map((r) => ({ ...r, checked: true })),
     ...config.suggested.map((path) => ({ path, available: true, checked: config.setupPending })),
   ]
-  return { roots, token: null, language: config.language, imagePrefetch: config.imagePrefetch }
+  return { roots, token: null, language: config.language, imagePrefetch: config.imagePrefetch, tileSize: config.tileSize }
 }
 
 // addRoot adds a checked folder, or checks it when it is already listed.
@@ -51,6 +57,7 @@ export function body(d) {
     token: d.token === null ? null : d.token.trim(),
     language: d.language,
     imagePrefetch: d.imagePrefetch,
+    tileSize: d.tileSize,
   }
 }
 
@@ -62,7 +69,15 @@ export function changed(config, d) {
     b.token !== null ||
     b.language !== config.language ||
     b.imagePrefetch !== config.imagePrefetch ||
+    b.tileSize !== config.tileSize ||
     b.roots.length !== saved.length ||
     b.roots.some((r, i) => r !== saved[i])
   )
+}
+
+// rescans reports whether saving the draft makes the server scan again:
+// on first use, and for any change but the card size, which only the pages
+// use.
+export function rescans(config, d) {
+  return config.setupPending || changed(config, { ...d, tileSize: config.tileSize })
 }

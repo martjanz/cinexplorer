@@ -26,6 +26,9 @@ var Languages = []string{"es-AR", "en-US", "pt-BR"}
 // PrefetchModes are the values of imagePrefetch; the first is the default.
 var PrefetchModes = []string{"none", "posters", "all"}
 
+// TileSizes are the values of tileSize; the first is the default.
+var TileSizes = []string{"medium", "small", "large"}
+
 type Config struct {
 	Roots     []string `json:"roots"`     // catalog-form paths, relative to the app dir
 	TMDBToken string   `json:"tmdbToken"` // TMDB v4 read access token
@@ -33,6 +36,9 @@ type Config struct {
 	// ImagePrefetch downloads images ahead: "posters", "all", or "none"
 	// (the default: on demand only).
 	ImagePrefetch string `json:"imagePrefetch,omitempty"`
+	// TileSize is how wide the cards on the home page are: "small",
+	// "medium" (the default) or "large".
+	TileSize string `json:"tileSize,omitempty"`
 }
 
 // Load reads config.json from appDir. When the file does not exist it returns

@@ -34,13 +34,14 @@ type configView struct {
 	Language      string     `json:"language"`
 	Languages     []string   `json:"languages"`
 	ImagePrefetch string     `json:"imagePrefetch"`
+	TileSize      string     `json:"tileSize"`
 }
 
 func (s *Server) configView() configView {
 	cfg := s.rt().Config
 	v := configView{SetupPending: s.Engine.SetupPending(), ReadOnly: s.ReadOnly, Roots: []rootView{}, Suggested: []string{},
 		HasToken: cfg.TMDBToken != "", Language: cfg.Language, Languages: config.Languages,
-		ImagePrefetch: cfg.ImagePrefetch}
+		ImagePrefetch: cfg.ImagePrefetch, TileSize: tileSize(cfg)}
 	for _, r := range cfg.Roots {
 		v.Roots = append(v.Roots, rootView{r, config.Available(s.AppDir, r)})
 	}
@@ -60,6 +61,14 @@ func (s *Server) configView() configView {
 		v.Languages = append(slices.Clone(v.Languages), v.Language)
 	}
 	return v
+}
+
+// tileSize is the configured card size, or the default one.
+func tileSize(cfg config.Config) string {
+	if cfg.TileSize == "" {
+		return config.TileSizes[0]
+	}
+	return cfg.TileSize
 }
 
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +147,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		Token         *string  `json:"token"`
 		Language      string   `json:"language"`
 		ImagePrefetch string   `json:"imagePrefetch"`
+		TileSize      string   `json:"tileSize"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "JSON inválido", http.StatusBadRequest)
@@ -156,7 +166,11 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		if req.ImagePrefetch != "" && !slices.Contains(config.PrefetchModes, req.ImagePrefetch) {
 			return config.Config{}, &engine.ValidationError{Err: fmt.Errorf("descarga de imágenes desconocida: %s", req.ImagePrefetch)}
 		}
-		cfg := config.Config{Roots: req.Roots, TMDBToken: cur.TMDBToken, Language: req.Language, ImagePrefetch: req.ImagePrefetch}
+		if req.TileSize != "" && !slices.Contains(config.TileSizes, req.TileSize) {
+			return config.Config{}, &engine.ValidationError{Err: fmt.Errorf("tamaño de tarjetas desconocido: %s", req.TileSize)}
+		}
+		cfg := config.Config{Roots: req.Roots, TMDBToken: cur.TMDBToken, Language: req.Language, ImagePrefetch: req.ImagePrefetch,
+			TileSize: req.TileSize}
 		if req.Token != nil {
 			cfg.TMDBToken = strings.TrimSpace(*req.Token)
 		}

@@ -134,10 +134,10 @@ export function sameTitle(a, b) {
   return norm(a) === norm(b)
 }
 
-// creditLine is the line under a title on the home page: first director,
-// up to two countries and the year ("Federico Fellini · Italia, Francia ·
-// 1973"); what is missing is left out. Pages show it in capitals.
-export function creditLine(movie) {
+// creditParts is what goes under a title on the home page: the first
+// director, shown apart, and then up to two countries and the year
+// ("Italia, Francia 1973"); what is missing is left empty.
+export function creditParts(movie) {
   const countries = (movie.countries ?? []).slice(0, 2).map(country).join(', ')
-  return [movie.directors?.[0], countries, movie.year || ''].filter(Boolean).join(' · ')
+  return { director: movie.directors?.[0] ?? '', rest: [countries, movie.year || ''].filter(Boolean).join(' ') }
 }

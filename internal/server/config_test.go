@@ -58,7 +58,7 @@ func TestGetConfig(t *testing.T) {
 		t.Fatalf("status %d", code)
 	}
 	want := configView{SetupPending: true, Roots: []rootView{{"../cine", true}}, Suggested: []string{"../ordenar"},
-		HasToken: true, TokenHint: "…1234", Language: "es-AR", Languages: config.Languages, ImagePrefetch: "none"}
+		HasToken: true, TokenHint: "…1234", Language: "es-AR", Languages: config.Languages, ImagePrefetch: "none", TileSize: "medium"}
 	if !reflect.DeepEqual(v, want) {
 		t.Fatalf("got %+v", v)
 	}
@@ -118,15 +118,15 @@ func TestPutConfig(t *testing.T) {
 	old := s.Engine.Current()
 	var v configView
 	// null keeps the token (no movies to identify: no network).
-	body := `{"roots":["../cine","../ordenar"],"token":null,"language":"pt-BR","imagePrefetch":"posters"}`
+	body := `{"roots":["../cine","../ordenar"],"token":null,"language":"pt-BR","imagePrefetch":"posters","tileSize":"large"}`
 	if code := send(t, s, "PUT", "/api/config", body, &v); code != 200 {
 		t.Fatalf("status %d", code)
 	}
-	if v.SetupPending || !v.HasToken || v.Language != "pt-BR" || len(v.Roots) != 2 || len(v.Suggested) != 0 || s.Engine.Current() == old {
+	if v.SetupPending || !v.HasToken || v.Language != "pt-BR" || v.TileSize != "large" || len(v.Roots) != 2 || len(v.Suggested) != 0 || s.Engine.Current() == old {
 		t.Fatalf("got %+v", v)
 	}
 	saved, _, _ := config.Load(s.AppDir)
-	want := config.Config{Roots: []string{"../cine", "../ordenar"}, TMDBToken: "eyJsecret1234", Language: "pt-BR", ImagePrefetch: "posters"}
+	want := config.Config{Roots: []string{"../cine", "../ordenar"}, TMDBToken: "eyJsecret1234", Language: "pt-BR", ImagePrefetch: "posters", TileSize: "large"}
 	if !reflect.DeepEqual(saved, want) {
 		t.Fatalf("saved %+v", saved)
 	}
@@ -146,6 +146,7 @@ func TestPutConfigRejects(t *testing.T) {
 		`{"roots":["../nada"],"language":"es-AR"}`,
 		`{"roots":["../cine"],"language":"xx-XX"}`,
 		`{"roots":["../cine"],"language":"es-AR","imagePrefetch":"some"}`,
+		`{"roots":["../cine"],"language":"es-AR","tileSize":"huge"}`,
 		`{"roots":`,
 	} {
 		if code := send(t, s, "PUT", "/api/config", body, nil); code != http.StatusBadRequest {

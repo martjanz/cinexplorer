@@ -20,6 +20,14 @@ export function rowTitle(row) {
 
 const KEY = 'cx-home-seed'
 
+const tileWidths = { small: 320, medium: 420, large: 560 }
+
+// tileWidth is how wide a home card is, in pixels, for a tileSize setting;
+// an unknown one gets the medium size.
+export function tileWidth(size) {
+  return tileWidths[size] ?? tileWidths.medium
+}
+
 // newSeed draws a seed for the rows.
 export function newSeed() {
   return Math.floor(Math.random() * 2 ** 32)

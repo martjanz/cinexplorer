@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { homeSeed, rowTitle, saveSeed } from './home.js'
+import { homeSeed, rowTitle, saveSeed, tileWidth } from './home.js'
 
 describe('rowTitle', () => {
   it.each([
@@ -42,5 +42,14 @@ describe('homeSeed', () => {
     }
     expect(homeSeed(broken)).toBeGreaterThanOrEqual(0)
     expect(homeSeed(undefined)).toBeGreaterThanOrEqual(0)
+  })
+})
+
+describe('tileWidth', () => {
+  it('sizes the cards, medium by default', () => {
+    expect(tileWidth('small')).toBe(320)
+    expect(tileWidth('large')).toBe(560)
+    expect(tileWidth('medium')).toBe(420)
+    expect(tileWidth(undefined)).toBe(420)
   })
 })

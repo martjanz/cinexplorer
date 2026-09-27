@@ -84,7 +84,10 @@
     overflow-x: auto;
     scroll-snap-type: x mandatory;
     scrollbar-width: none;
-    padding-bottom: 4px;
+    /* Room for the hover outline, which the scroll box would clip. */
+    padding: 4px;
+    margin: -4px;
+    scroll-padding-inline: 4px;
   }
   .track::-webkit-scrollbar {
     display: none;
@@ -92,7 +95,7 @@
   .arrow {
     position: absolute;
     top: 0;
-    height: calc(320px * 9 / 16); /* the card's image */
+    height: calc(var(--card-w) * 9 / 16); /* the card's image */
     width: 44px;
     border: none;
     border-radius: 0;

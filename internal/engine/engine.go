@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 
@@ -37,7 +38,8 @@ type Engine struct {
 }
 
 // Runtime is everything built from one configuration. Pages read it once
-// per request; it does not change after it is built.
+// per request; it does not change after it is built. A change of display
+// settings only replaces it with a copy that keeps the same parts running.
 type Runtime struct {
 	Config     config.Config
 	TMDB       identify.API     // nil without a token
@@ -45,6 +47,10 @@ type Runtime struct {
 	Scanner    *scan.Scanner    // nil in read-only mode
 	Identifier *identify.Runner // nil in read-only mode
 
+	*lifecycle // shared by those copies
+}
+
+type lifecycle struct {
 	mu      sync.Mutex
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -68,7 +74,12 @@ func (e *Engine) Current() *Runtime { return e.current.Load() }
 
 // Use replaces the runtime as it is, without stopping the previous one or
 // scanning (tests build their own).
-func (e *Engine) Use(rt *Runtime) { e.current.Store(rt) }
+func (e *Engine) Use(rt *Runtime) {
+	if rt.lifecycle == nil {
+		rt.lifecycle = &lifecycle{}
+	}
+	e.current.Store(rt)
+}
 
 // SetupPending reports whether the first-use assistant has to run.
 func (e *Engine) SetupPending() bool { return e.pending.Load() }
@@ -91,7 +102,9 @@ func (e *ValidationError) Unwrap() error { return e.Err }
 // same lock Apply uses, so a "keep the saved token/language" decision can
 // never race a concurrent PUT: f receives the configuration in effect right
 // now and returns what to save, or a *ValidationError if it rejects it. It
-// then saves and replaces the runtime exactly as Apply does.
+// then saves and replaces the runtime exactly as Apply does, except when
+// only display settings changed: then the running parts are kept as they
+// are, and nothing is scanned again.
 func (e *Engine) Update(f func(cur config.Config) (config.Config, error)) error {
 	if e.ReadOnly {
 		return ErrReadOnly
@@ -109,7 +122,14 @@ func (e *Engine) Update(f func(cur config.Config) (config.Config, error)) error 
 	if err := config.Save(e.AppDir, cfg); err != nil {
 		return err
 	}
-	if old := e.current.Load(); old != nil {
+	old := e.current.Load()
+	if old != nil && !e.pending.Load() && displayOnly(old.Config, cfg) {
+		rt := *old
+		rt.Config = cfg
+		e.current.Store(&rt)
+		return nil
+	}
+	if old != nil {
 		old.Stop()
 	}
 	rt := e.build(cfg)
@@ -119,8 +139,16 @@ func (e *Engine) Update(f func(cur config.Config) (config.Config, error)) error 
 	return nil
 }
 
+// displayOnly reports whether a and b differ at most in what only the pages
+// use (the card size), which no part of the runtime depends on.
+func displayOnly(a, b config.Config) bool {
+	a.TileSize, b.TileSize = "", ""
+	return reflect.DeepEqual(a, b)
+}
+
 func (e *Engine) build(cfg config.Config) *Runtime {
-	rt := &Runtime{Config: cfg, Images: &images.Cache{Dir: filepath.Join(e.AppDir, "cache"), ReadOnly: e.ReadOnly}}
+	rt := &Runtime{Config: cfg, Images: &images.Cache{Dir: filepath.Join(e.AppDir, "cache"), ReadOnly: e.ReadOnly},
+		lifecycle: &lifecycle{}}
 	var api *tmdb.Client
 	if cfg.TMDBToken != "" {
 		api = tmdb.New(cfg.TMDBToken)

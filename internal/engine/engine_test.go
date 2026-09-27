@@ -141,6 +141,42 @@ func TestApplyReplacesRuntime(t *testing.T) {
 	}
 }
 
+// TestUpdateDisplayOnlyKeepsRuntime checks that changing only the card size
+// saves config.json but neither stops the runtime nor scans again.
+func TestUpdateDisplayOnlyKeepsRuntime(t *testing.T) {
+	e := newEngine(t, false)
+	e.Start(config.Config{Roots: []string{"../cine"}, Language: "es-AR"}, false)
+	waitScan(t, e)
+	old := e.Current()
+	finished := old.Scanner.Status().Finished
+	cfg := config.Config{Roots: []string{"../cine"}, Language: "es-AR", TileSize: "large"}
+	if err := e.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond) // time for a scan it should not start
+	rt := e.Current()
+	if st := rt.Scanner.Status(); rt.Config.TileSize != "large" || rt.Scanner != old.Scanner || rt.Identifier != old.Identifier ||
+		st.Running || !st.Finished.Equal(finished) {
+		t.Fatalf("runtime %+v", rt)
+	}
+	if saved, _, _ := config.Load(e.AppDir); !reflect.DeepEqual(saved, cfg) {
+		t.Fatalf("saved %+v", saved)
+	}
+	// Still running: it scans when asked, and a real change stops it.
+	rt.Scan()
+	waitScan(t, e)
+	if err := e.Apply(config.Config{Roots: []string{"../otro"}, Language: "es-AR", TileSize: "large"}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Current().Scanner == old.Scanner {
+		t.Fatal("runtime not replaced")
+	}
+	old.Scan()
+	if old.Scanner.Status().Running {
+		t.Fatal("a stopped runtime scanned")
+	}
+}
+
 // TestUpdateSeesCurrentConfig checks that Update hands f the configuration
 // in effect right now, under the same lock Apply uses, so resolving "keep
 // the saved token" against it can't race a concurrent Apply/Update.

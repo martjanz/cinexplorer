@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   country,
-  creditLine,
+  creditParts,
   duration,
   fileName,
   language,
@@ -88,13 +88,14 @@ describe('versions', () => {
   })
 })
 
-describe('creditLine', () => {
-  it('joins director, countries and year', () => {
-    expect(creditLine({ directors: ['Federico Fellini', 'Otro'], countries: ['IT', 'FR', 'DE'], year: 1973 })).toBe(
-      'Federico Fellini · Italia, Francia · 1973',
-    )
-    expect(creditLine({ directors: [], countries: [], year: 0 })).toBe('')
-    expect(creditLine({ year: 1979 })).toBe('1979')
+describe('creditParts', () => {
+  it('splits the director from countries and year', () => {
+    expect(creditParts({ directors: ['Federico Fellini', 'Otro'], countries: ['IT', 'FR', 'DE'], year: 1973 })).toEqual({
+      director: 'Federico Fellini',
+      rest: 'Italia, Francia 1973',
+    })
+    expect(creditParts({ directors: [], countries: [], year: 0 })).toEqual({ director: '', rest: '' })
+    expect(creditParts({ year: 1979 })).toEqual({ director: '', rest: '1979' })
   })
 })
 

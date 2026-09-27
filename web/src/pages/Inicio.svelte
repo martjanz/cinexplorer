@@ -2,7 +2,7 @@
   import FilaInicio from '../components/FilaInicio.svelte'
   import { api } from '../lib/api.js'
   import { app, notify } from '../lib/app.svelte.js'
-  import { homeSeed, newSeed, saveSeed } from '../lib/home.js'
+  import { homeSeed, newSeed, saveSeed, tileWidth } from '../lib/home.js'
   import { busy, summary, tokenProblem } from '../lib/status.js'
 
   // sessionStorage may be unavailable (private mode, blocked site data).
@@ -53,9 +53,11 @@
       <span class="label">{data.total} películas</span>
       <button class="shuffle" onclick={reshuffle} title="Otras filas" aria-label="Otras filas">↻</button>
     </div>
-    {#each data.rows as row (row.kind + ':' + row.value)}
-      <FilaInicio {row} />
-    {/each}
+    <div style:--card-w="{tileWidth(data.tileSize)}px">
+      {#each data.rows as row (row.kind + ':' + row.value)}
+        <FilaInicio {row} />
+      {/each}
+    </div>
   {:else if busy(st)}
     <p class="empty">{summary(st).text}… Las películas van a aparecer a medida que se identifiquen.</p>
   {:else if tokenProblem(st)}

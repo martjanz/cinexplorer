@@ -4,7 +4,7 @@
   import Token from '../components/Token.svelte'
   import { api } from '../lib/api.js'
   import { notify, settingsSaved } from '../lib/app.svelte.js'
-  import { body, changed, draft, prefetchModes } from '../lib/settings.js'
+  import { body, changed, draft, prefetchModes, rescans, tileSizes } from '../lib/settings.js'
 
   let config = $state(null)
   let d = $state(null)
@@ -26,12 +26,13 @@
 
   async function save() {
     saving = true
+    const scans = rescans(config, d)
     try {
       config = await api.saveConfig(body(d))
       d = draft(config)
       version++
       settingsSaved()
-      notify('Ajustes guardados. Se vuelve a escanear.')
+      notify(scans ? 'Ajustes guardados. Se vuelve a escanear.' : 'Ajustes guardados.')
     } catch (e) {
       notify(e.message)
     }
@@ -87,6 +88,19 @@
       </div>
     </section>
 
+    <section>
+      <h2>Tarjetas del inicio</h2>
+      <p class="help">Más grandes entran menos por fila, pero los títulos largos se leen mejor.</p>
+      <div class="sizes">
+        {#each tileSizes as t (t.value)}
+          <label>
+            <input type="radio" name="tile" value={t.value} bind:group={d.tileSize} disabled={config.readOnly} />
+            {t.label}
+          </label>
+        {/each}
+      </div>
+    </section>
+
     {#if !config.readOnly}
       <div class="actions">
         <button class="primary" onclick={save} disabled={!dirty || saving || !d.roots.some((r) => r.checked)}>
@@ -126,6 +140,15 @@
   .modes label {
     display: flex;
     gap: 10px;
+    align-items: baseline;
+  }
+  .sizes {
+    display: flex;
+    gap: 20px;
+  }
+  .sizes label {
+    display: flex;
+    gap: 8px;
     align-items: baseline;
   }
   small {

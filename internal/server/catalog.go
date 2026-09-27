@@ -39,7 +39,12 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, catalog.HomePage(snap, seed))
+	// The card size travels with the rows: it is all the page needs of
+	// the settings.
+	writeJSON(w, struct {
+		catalog.Home
+		TileSize string `json:"tileSize"`
+	}{catalog.HomePage(snap, seed), tileSize(s.rt().Config)})
 }
 
 func (s *Server) movie(w http.ResponseWriter, r *http.Request) {
