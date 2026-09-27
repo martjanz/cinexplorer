@@ -8,19 +8,23 @@
   let mode = $state(untrack(() => config.hasToken) ? 'keep' : 'edit') // keep | edit | remove
   let text = $state('')
   let check = $state(null) // null, 'checking', true, false, 'unknown'
+  let checks = 0
 
   $effect(() => {
     if (mode === 'edit') token = text.trim() ? text : null
     else token = mode === 'remove' ? '' : null
   })
 
+  // Only the latest verify() fills check: an earlier, slower one would
+  // label text the person has since changed.
   async function verify() {
+    const id = ++checks
     check = 'checking'
     try {
       const r = await api.checkToken(text)
-      check = r.valid === null ? 'unknown' : r.valid
+      if (id === checks) check = r.valid === null ? 'unknown' : r.valid
     } catch {
-      check = 'unknown'
+      if (id === checks) check = 'unknown'
     }
   }
 </script>
@@ -48,7 +52,7 @@
     <input
       type="text"
       bind:value={text}
-      oninput={() => (check = null)}
+      oninput={() => ((checks += 1), (check = null))}
       placeholder="eyJhbGciOiJIUzI1NiJ9…"
       aria-label="Token de TMDB"
       autocomplete="off"
