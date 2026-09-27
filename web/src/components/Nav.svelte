@@ -7,7 +7,14 @@
 
 <header>
   <nav>
-    <a class="brand" href="/">Cinexplorer</a>
+    <a class="brand" href="/">
+      <!-- the favicon's glyph -->
+      <svg viewBox="7 5 18 22" width="15" height="18" aria-hidden="true">
+        <rect x="8.25" y="6.25" width="15.5" height="19.5" rx="2" fill="none" stroke="currentColor" stroke-width="2.5" />
+        <path d="M13 12v8l7-4z" fill="currentColor" />
+      </svg>
+      Cinexplorer
+    </a>
     <a class="home" href="/" class:active={page === 'inicio'}>Inicio</a>
     <a href="/explorar" class:active={page === 'explorar'}>Explorar</a>
     <a href="/revisar" class:active={page === 'revisar'}>Revisar</a>
@@ -50,9 +57,19 @@
     color: var(--muted);
   }
   .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-right: 20px;
+    border-right: 1px solid var(--line-strong);
     color: var(--strong);
+    font-size: 18px;
     font-weight: 700;
-    letter-spacing: 0.14em;
+    letter-spacing: -0.01em;
+    text-transform: none;
+  }
+  .brand svg {
+    color: var(--accent);
   }
   .active {
     color: var(--strong);
@@ -70,7 +87,8 @@
       letter-spacing: 0.02em;
     }
     .brand {
-      letter-spacing: 0.08em;
+      font-size: 16px;
+      padding-right: 8px;
     }
     .home {
       display: none; /* the brand leads home */
