@@ -32,6 +32,16 @@ func (s *Server) explore(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"total": len(items), "query": q, "items": items, "facets": catalog.Counts(all, q.Facets)})
 }
 
+// home answers the home page: rows of movies, drawn with the page's seed.
+func (s *Server) home(w http.ResponseWriter, r *http.Request) {
+	seed, _ := strconv.ParseUint(r.URL.Query().Get("seed"), 10, 64)
+	snap, ok := s.snapshot(w)
+	if !ok {
+		return
+	}
+	writeJSON(w, catalog.HomePage(snap, seed))
+}
+
 func (s *Server) movie(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil || id <= 0 {

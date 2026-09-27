@@ -58,6 +58,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/identify", jsonOnly(s.identify))
 	mux.HandleFunc("GET /img/{kind}/{file}", s.image)
 	mux.HandleFunc("GET /api/search", s.find)
+	mux.HandleFunc("GET /api/home", s.home)
 	mux.HandleFunc("GET /api/config", s.getConfig)
 	mux.HandleFunc("PUT /api/config", jsonOnly(s.putConfig))
 	mux.HandleFunc("POST /api/config/root", jsonOnly(s.checkRoot))

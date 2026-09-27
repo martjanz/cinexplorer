@@ -139,3 +139,19 @@ func TestMoviesEndpoint(t *testing.T) {
 		t.Fatalf("suggestions %+v", refs)
 	}
 }
+
+func TestHomeEndpoint(t *testing.T) {
+	s, _ := identifyServer(t)
+	var h catalog.Home
+	if code := getJSON(t, s, "/api/home?seed=3", &h); code != 200 || h.Total != 0 || h.Rows == nil {
+		t.Fatalf("%d %+v", code, h)
+	}
+	s.rt().Identifier.Adopt(context.Background(), 7857)
+	if err := s.Store.SetCorrection("f1", store.StatusManual, 7857); err != nil {
+		t.Fatal(err)
+	}
+	if code := getJSON(t, s, "/api/home?seed=x", &h); code != 200 || h.Total != 1 || len(h.Rows) != 1 ||
+		h.Rows[0].Kind != catalog.RowRecent || h.Rows[0].Items[0].Backdrop != "b" {
+		t.Fatalf("%d %+v", code, h)
+	}
+}
