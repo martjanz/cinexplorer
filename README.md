@@ -22,18 +22,29 @@ El proyecto avanza por etapas (ver `docs/superpowers/specs/`):
 | 1. Núcleo | escaneo, parser de nombres, versiones, catálogo SQLite, API | ✅ |
 | 2. Datos técnicos | lectura de encabezados MKV/MP4/AVI/IFO, `ffprobe` opcional, mejor versión | ✅ |
 | 3. Identificación | TMDB + Wikidata, puntaje de confianza, correcciones, afiches | ✅ |
-| 4. Interfaz | interfaz Svelte (Inicio, Explorar, Ficha, Revisar, búsqueda) | pendiente |
+| 4a. Catálogo navegable | interfaz Svelte: Explorar con facetas, Ficha, Revisar | ✅ |
+| 4b. Descubrimiento | Inicio, búsqueda instantánea, asistente de primer uso | pendiente |
 | 5. Curaduría | listas, etiquetas, importación de `Collections/` | pendiente |
 
-Por ahora la interfaz es una página mínima, pensada para revisar el catálogo.
-Tiene tres pestañas:
+La interfaz tiene tres partes:
 
-- **Versiones:** cada versión con la película identificada, su calidad, audio,
-  subtítulos, la marca **MEJOR** cuando tenés varias, y los botones ▶ Ver y
-  Carpeta.
-- **Sin identificar:** los casos dudosos, con candidatos para confirmar y
-  búsqueda manual.
-- **Copias idénticas:** archivos repetidos byte a byte.
+- **Explorar:** la colección como grilla de afiches, con facetas combinables
+  (década y año, director, género, país, resolución, subtítulos, idioma
+  original, colección, ubicación en disco y estado) y orden por año, título,
+  fecha de alta o tamaño. Los filtros quedan en la dirección de la página, así
+  que se pueden guardar como favoritos y el botón "atrás" funciona. Lo que
+  todavía no está identificado aparece igual, con un afiche genérico.
+- **Ficha de cada película:** datos de TMDB y, debajo, cada versión en disco
+  con su calidad, audio, subtítulos, la marca **MEJOR** y **COPIA IDÉNTICA**,
+  y los botones ▶ Ver y Carpeta. El menú ⋯ de cada versión corrige la
+  identificación.
+- **Revisar:** la cola de **Sin identificar** (candidatos, búsqueda manual, "no
+  es una película", "es un extra de…", con atajos de teclado) y los
+  **Duplicados** (copias idénticas y varias versiones de una película, con el
+  espacio que se podría recuperar).
+
+Un indicador arriba a la derecha muestra el escaneo y la identificación en
+curso; las páginas se actualizan solas a medida que avanzan.
 
 ## Requisitos
 
@@ -49,7 +60,8 @@ Para usarlo:
   WMV…) o cuando un encabezado no se puede leer. Si lo instalás después, hay que
   reiniciar la app; los archivos que habían fallado se vuelven a analizar solos.
 
-Para compilarlo: Go 1.27 o posterior (ver [Desarrollo](#desarrollo)).
+Para compilarlo: Go 1.27 o posterior; Node 22.12 o posterior solo para
+modificar la interfaz (ver [Desarrollo](#desarrollo)).
 
 ## Instalación
 
@@ -197,38 +209,56 @@ Todo queda en la carpeta de la app; borrarlos no afecta a las películas.
 
 ## API
 
-La página usa una API JSON local; también sirve para scripts. Los `POST`
+La interfaz usa una API JSON local; también sirve para scripts. Los `POST`
 requieren `Content-Type: application/json`.
 
 | Método y ruta | Qué hace |
 |---|---|
 | `GET /api/status` | Estado del escaneo y de la identificación. |
+| `GET /api/explore?decada=&anio=&director=&genero=&pais=&idioma=&coleccion=&resolucion=&subs=&ubicacion=&estado=&orden=&dir=` | Ítems de Explorar que cumplen las facetas, y los valores de cada faceta con su conteo. |
+| `GET /api/movies/{tmdbId}` | Ficha de una película: datos, versiones y extras. |
+| `GET /api/movies?q=&near=` | Películas del catálogo para "es un extra de…". |
+| `GET /api/versions/{huella}` | Ficha de una versión que no es (todavía) una película del catálogo. |
 | `GET /api/versions` | Todas las versiones con archivos, datos técnicos, identificación y película. |
-| `GET /api/unidentified` | Versiones sin identificar, con candidatos. |
-| `GET /api/duplicates` | Grupos de copias idénticas. |
+| `GET /api/unidentified` | Cola de sin identificar, con candidatos, y cuántas esperan identificación. |
+| `GET /api/duplicates` | Copias idénticas y varias versiones, con el espacio recuperable. |
 | `GET /api/tmdb/search?q=&year=` | Búsqueda manual en TMDB (`q` puede ser un IMDb id `tt…`). |
 | `POST /api/identify` | Corrección: `{"fingerprint", "action": "movie"\|"extra"\|"ignore"\|"reset", "tmdbId"}`. |
 | `POST /api/scan` | Lanza un escaneo. |
 | `POST /api/open`, `POST /api/reveal` | Abre un archivo del catálogo con la aplicación del sistema, o muestra su carpeta. |
-| `GET /img/{poster\|backdrop}/{tmdbId}.jpg` | Imágenes desde la caché. |
+| `GET /img/{poster\|backdrop}/{tmdbId}.jpg` | Imágenes desde la caché (`?v=` identifica la versión de la imagen). |
 
 ## Desarrollo
 
 Requisitos: **Go 1.27+**. No hace falta cgo: SQLite es
 [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite), escrito en Go
-puro, así que la compilación cruzada es directa. No hay otras dependencias.
+puro, así que la compilación cruzada es directa.
+
+La interfaz (Svelte 5 + Vite, en `web/`) se compila a `internal/server/dist/`,
+que está commiteado y queda embebido en el binario: para compilar o testear el
+Go no hace falta Node. Para modificar la interfaz hace falta **Node 22.12+**.
 
 ```bash
 go test ./...                          # suite completa (no usa red)
 go run ./cmd/cinexplorer -dir .run     # corre la app con config y catálogo en .run/
-bash scripts/build.sh                  # compila los tres binarios en dist/cinexplorer/
+bash scripts/build.sh                  # compila la interfaz y los tres binarios en dist/cinexplorer/
+```
+
+Para trabajar en la interfaz con recarga en caliente:
+
+```bash
+go run ./cmd/cinexplorer -dir .run -port 8080 -no-browser   # la API, en una terminal
+cd web && npm install && npm run dev                        # la interfaz en http://localhost:5173
+npm test                                                    # tests de la lógica de la interfaz (Vitest)
+npm run build                                               # actualiza internal/server/dist/ (commitealo)
 ```
 
 `scripts/build.sh` compila para Windows (amd64), Linux (amd64) y macOS (amd64 +
 arm64), y une los dos binarios de macOS en uno universal con
 [`makefat`](https://github.com/randall77/makefat), que se descarga con
 `go run` y necesita red la primera vez. La CI (GitHub Actions) corre `go vet` y
-`go test` en Windows, macOS y Linux.
+`go test` en Windows, macOS y Linux, y en otro job los tests de la interfaz y
+su build, que tiene que coincidir con el commiteado.
 
 Tests sobre datos reales (opcionales, fuera de CI):
 
@@ -260,8 +290,10 @@ internal/tmdb         cliente de TMDB
 internal/wikidata     cliente de Wikidata (SPARQL)
 internal/images       caché de imágenes
 internal/identify     puntaje, búsqueda, enriquecimiento y el proceso en segundo plano
-internal/server       API JSON y página embebida (internal/server/web)
+internal/catalog      ítems, facetas, fichas y duplicados de la interfaz
+internal/server       API JSON y la interfaz embebida (internal/server/dist)
 internal/platform     abrir archivos y carpetas con el sistema
+web/                  la interfaz (Svelte 5 + Vite)
 ```
 
 El diseño y los planes de cada etapa están en `docs/superpowers/specs/` y
@@ -273,9 +305,10 @@ El diseño y los planes de cada etapa están en `docs/superpowers/specs/` y
   revisá que sea el *API Read Access Token* (v4), no la API Key corta.
 - **"Sin conexión: se reintenta más tarde":** TMDB o Wikidata no respondieron.
   La app reintenta sola; mientras tanto, todo lo demás funciona.
-- **Una película mal identificada o sin identificar:** confirmá el candidato
-  correcto, o buscala a mano por título o por IMDb id (`tt0071129`), en la
-  pestaña "Sin identificar".
+- **Una película mal identificada o sin identificar:** en Revisar → Sin
+  identificar, confirmá el candidato correcto o buscala a mano por título o por
+  IMDb id (`tt0071129`). Una identificación equivocada se corrige desde el menú
+  ⋯ de la versión, en la ficha de la película.
 - **Archivos que no aparecen:** revisá `roots` en `config.json`; las rutas son
   relativas a la carpeta de la app.
 - **"Modo consulta (solo lectura)":** la carpeta de la app no se puede
