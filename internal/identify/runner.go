@@ -77,6 +77,12 @@ type Runner struct {
 	again   bool // a Trigger arrived during a run
 	backoff time.Duration
 	cancel  func() // pending retry
+	// base is the context of the background runs; Close cancels it and
+	// waits for them (wg).
+	base   context.Context
+	stop   context.CancelFunc
+	closed bool
+	wg     sync.WaitGroup
 }
 
 func (r *Runner) Status() Status {
@@ -93,23 +99,33 @@ func (r *Runner) Status() Status {
 }
 
 // Trigger starts a run in the background. A trigger during a run makes one
-// more run follow it.
+// more run follow it. After Close it does nothing.
 func (r *Runner) Trigger() {
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return
+	}
 	if r.running {
 		r.again = true
 		r.mu.Unlock()
 		return
 	}
 	r.running = true
+	if r.base == nil {
+		r.base, r.stop = context.WithCancel(context.Background())
+	}
+	ctx := r.base
+	r.wg.Add(1)
 	r.mu.Unlock()
 	go func() {
+		defer r.wg.Done()
 		for {
-			if err := r.run(context.Background()); err != nil {
+			if err := r.run(ctx); err != nil && ctx.Err() == nil {
 				log.Printf("identificación: %v", err)
 			}
 			r.mu.Lock()
-			if !r.again {
+			if !r.again || r.closed {
 				r.running = false
 				r.mu.Unlock()
 				return
@@ -118,6 +134,22 @@ func (r *Runner) Trigger() {
 			r.mu.Unlock()
 		}
 	}()
+}
+
+// Close stops the background runs for good: it cancels the one in progress,
+// and the pending retry, and waits for it to end. What it saved stays.
+func (r *Runner) Close() {
+	r.mu.Lock()
+	r.closed = true
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	if r.stop != nil {
+		r.stop()
+	}
+	r.mu.Unlock()
+	r.wg.Wait()
 }
 
 // Run performs one run synchronously; ErrBusy if one is in progress.
@@ -167,6 +199,9 @@ func (r *Runner) run(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch {
+	case r.closed:
+		r.status.State = StateIdle
+		return nil
 	case errors.Is(err, httpx.ErrOffline):
 		r.status.State = StateOffline
 		if r.backoff == 0 {

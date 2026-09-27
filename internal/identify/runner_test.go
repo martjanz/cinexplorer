@@ -400,3 +400,44 @@ func TestRunFallsBackToFolderName(t *testing.T) {
 		t.Fatalf("gauchos %+v", g)
 	}
 }
+
+// blockingAPI waits in every search until its context ends.
+type blockingAPI struct {
+	*fakeAPI
+	started chan struct{}
+}
+
+func (b *blockingAPI) SearchMovie(ctx context.Context, q string, year int, lang string) ([]tmdb.Result, error) {
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestCloseStopsBackgroundRuns(t *testing.T) {
+	r, api, _ := fixture(t)
+	b := &blockingAPI{fakeAPI: api, started: make(chan struct{}, 1)}
+	r.TMDB = b
+	r.Trigger()
+	select {
+	case <-b.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run did not start")
+	}
+	r.Trigger() // a follow-up that Close must drop
+	r.Close()
+	if r.busy() {
+		t.Fatal("still running after Close")
+	}
+	if st := r.Status().State; st != StateIdle {
+		t.Fatalf("state %s", st)
+	}
+	r.TMDB = api
+	r.Trigger()
+	time.Sleep(50 * time.Millisecond)
+	if r.busy() || current(t, r.Store, "a1") != nil {
+		t.Fatal("Trigger ran after Close")
+	}
+}
