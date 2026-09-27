@@ -18,9 +18,9 @@ export function tmdbProblem(st) {
   if (st.readOnly) return 'Modo consulta: el catálogo no se puede modificar.'
   switch (st.identify?.state) {
     case 'noToken':
-      return 'Falta el token de TMDB en config.json: no se pueden buscar películas.'
+      return 'Falta el token de TMDB: cargalo en Ajustes para buscar películas.'
     case 'badToken':
-      return 'TMDB rechazó el token de config.json.'
+      return 'TMDB rechazó el token: revisalo en Ajustes.'
     case 'offline':
       return 'Sin conexión con TMDB: se reintenta solo.'
   }
@@ -53,4 +53,10 @@ export function summary(st) {
       return { text: 'Token de TMDB inválido', tone: 'warn' }
   }
   return { text: 'Al día', tone: '' }
+}
+
+// tokenProblem reports whether the TMDB token is missing or rejected: what
+// Ajustes fixes.
+export function tokenProblem(st) {
+  return !!st && !st.readOnly && (st.identify?.state === 'noToken' || st.identify?.state === 'badToken')
 }

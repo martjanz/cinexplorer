@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   country,
+  creditLine,
   duration,
   fileName,
   language,
@@ -84,6 +85,16 @@ describe('versions', () => {
     expect(mainFile(v).path).toBe('../cine/a/CD2.mkv')
     expect(mainFile({ files: [] })).toBeNull()
     expect(fileName('../cine/a/CD2.mkv')).toBe('CD2.mkv')
+  })
+})
+
+describe('creditLine', () => {
+  it('joins director, countries and year', () => {
+    expect(creditLine({ directors: ['Federico Fellini', 'Otro'], countries: ['IT', 'FR', 'DE'], year: 1973 })).toBe(
+      'Federico Fellini · Italia, Francia · 1973',
+    )
+    expect(creditLine({ directors: [], countries: [], year: 0 })).toBe('')
+    expect(creditLine({ year: 1979 })).toBe('1979')
   })
 })
 

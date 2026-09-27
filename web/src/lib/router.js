@@ -2,8 +2,11 @@
 
 // resolve maps a pathname to the page to show and its parameters.
 export function resolve(pathname) {
-  if (pathname === '/') return { page: 'redirect', to: '/explorar' }
+  if (pathname === '/') return { page: 'inicio' }
   if (pathname === '/explorar') return { page: 'explorar' }
+  if (pathname === '/buscar') return { page: 'buscar' }
+  if (pathname === '/ajustes') return { page: 'ajustes' }
+  if (pathname === '/bienvenida') return { page: 'bienvenida' }
   if (pathname === '/revisar') return { page: 'revisar', tab: 'sin-identificar' }
   if (pathname === '/revisar/duplicados') return { page: 'revisar', tab: 'duplicados' }
   let m = pathname.match(/^\/pelicula\/([1-9][0-9]*)$/)

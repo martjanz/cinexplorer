@@ -3,8 +3,11 @@ import { appLink, itemHref, resolve } from './router.js'
 
 describe('resolve', () => {
   it.each([
-    ['/', { page: 'redirect', to: '/explorar' }],
+    ['/', { page: 'inicio' }],
     ['/explorar', { page: 'explorar' }],
+    ['/buscar', { page: 'buscar' }],
+    ['/ajustes', { page: 'ajustes' }],
+    ['/bienvenida', { page: 'bienvenida' }],
     ['/revisar', { page: 'revisar', tab: 'sin-identificar' }],
     ['/revisar/duplicados', { page: 'revisar', tab: 'duplicados' }],
     ['/pelicula/7857', { page: 'pelicula', id: 7857 }],

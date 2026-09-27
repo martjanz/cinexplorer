@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { busy, progress, summary, tmdbProblem } from './status.js'
+import { busy, progress, summary, tmdbProblem, tokenProblem } from './status.js'
 
 const idle = { readOnly: false, scan: { running: false }, identify: { state: 'idle' } }
 
@@ -49,5 +49,16 @@ describe('progress', () => {
     expect(progress(idle)).toBe('0|0|0')
     expect(progress({ scan: { versions: 40 }, identify: { identified: 3, enriched: 1 } })).toBe('40|3|1')
     expect(progress({ scan: { versions: 40 }, identify: null })).toBe('40|0|0')
+  })
+})
+
+describe('tokenProblem', () => {
+  it('is set when Ajustes can fix the token', () => {
+    expect(tokenProblem(null)).toBe(false)
+    expect(tokenProblem(idle)).toBe(false)
+    expect(tokenProblem({ ...idle, identify: { state: 'noToken' } })).toBe(true)
+    expect(tokenProblem({ ...idle, identify: { state: 'badToken' } })).toBe(true)
+    expect(tokenProblem({ ...idle, identify: { state: 'offline' } })).toBe(false)
+    expect(tokenProblem({ ...idle, readOnly: true, identify: { state: 'noToken' } })).toBe(false)
   })
 })
