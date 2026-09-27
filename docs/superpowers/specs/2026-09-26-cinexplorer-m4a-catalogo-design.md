@@ -254,4 +254,13 @@ Fuera de 4a, registrados para más adelante:
 - Pendientes de la Etapa 3 no incluidos: huérfanos (identificaciones y películas sin archivos), clave de consulta inestable ante un `.nfo` ilegible, `Run` fuera del encolado de `Trigger`.
 - **Partes con separadores distintos** (encontrado al probar Duplicados sobre `D:\cine\1970s`): `Rip mentecato cd 01` y `Rip.mentecato.cd.02` quedan como dos versiones, y Duplicados las muestra como "varias versiones". Es del armado de versiones de la Etapa 1; queda como tarea aparte.
 - `store.Duplicates` (copias idénticas a nivel de archivo) ya no lo usa el servidor; solo lo usan los tests del escáner.
+- De la revisión final de la implementación (menores):
+  - Las tarjetas de candidatos muestran año · título original; §9.5 pide año · director, y `Candidate` no guarda directores.
+  - Explorar vacío muestra "Escaneando…" sin el progreso que pide §9.2.
+  - §6 describe los grupos de `/api/duplicates` con `fingerprint`; el código usa `kind`, `tmdbId` y `key`.
+  - Los ítems de versión no llevan los países del nombre (§5.3); nada los muestra todavía.
+  - La faceta Ubicación compara la raíz tal como está en `config.json` (`..\cine` o `./../cine` no dan valores); convendría `path.Clean(filepath.ToSlash(r))`, igual que en el armado de versiones.
+  - Una Ficha cuya última versión se movió a otra película muestra "0 versiones"; mejor un aviso o volver atrás.
+  - Endurecimiento: `//go:embed all:dist` (hoy se saltearía un archivo que empiece con `_` o `.`) y `-text` para imágenes bajo `web/public`.
+  - Una búsqueda de TMDB que falla por 429/5xx deja el ítem en `unmatched` hasta revisarlo.
 - **4b**: Inicio (§5.1), búsqueda con FTS5 (§5.6, puede reemplazar el filtro de `GET /api/movies?q=`), asistente de primer uso (§5.7).
