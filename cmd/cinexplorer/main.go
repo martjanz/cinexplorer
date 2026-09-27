@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,13 +14,10 @@ import (
 
 	"cinexplorer/internal/appdir"
 	"cinexplorer/internal/config"
-	"cinexplorer/internal/identify"
-	"cinexplorer/internal/images"
+	"cinexplorer/internal/engine"
 	"cinexplorer/internal/platform"
-	"cinexplorer/internal/scan"
 	"cinexplorer/internal/server"
 	"cinexplorer/internal/store"
-	"cinexplorer/internal/tmdb"
 	"cinexplorer/internal/wikidata"
 )
 
@@ -59,10 +55,11 @@ func run(dirOverride string, port int, browser bool) error {
 	return http.Serve(ln, srv.Handler())
 }
 
-// setup opens the catalog in the app directory and wires the server: TMDB
-// when there is a token, and, when the directory is writable, the scanner
-// (started right away) and the identification runner. closeStore closes the
-// catalog.
+// setup opens the catalog in the app directory and wires the server around
+// an engine built from config.json. Without config.json (a first start) and
+// with a writable directory, nothing is saved or scanned until the first-use
+// assistant saves the settings; otherwise the scan starts right away.
+// closeStore stops the engine and closes the catalog.
 func setup(dirOverride string) (srv *server.Server, closeStore func() error, err error) {
 	appDir, err := appdir.Resolve(dirOverride)
 	if err != nil {
@@ -73,44 +70,27 @@ func setup(dirOverride string) (srv *server.Server, closeStore func() error, err
 	if err != nil {
 		return nil, nil, err
 	}
-	if created && !readOnly {
-		if err := config.Save(appDir, cfg); err != nil {
-			return nil, nil, err
-		}
-		log.Printf("config.json creado con raíces %v", cfg.Roots)
-	}
 
 	st, err := openStore(appDir, readOnly)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	srv = &server.Server{AppDir: appDir, Roots: cfg.Roots, Store: st, ReadOnly: readOnly, Opener: platform.Open, Revealer: platform.Reveal,
-		Language: cfg.Language, Images: &images.Cache{Dir: filepath.Join(appDir, "cache"), ReadOnly: readOnly}}
-	var api *tmdb.Client
-	if cfg.TMDBToken != "" {
-		api = tmdb.New(cfg.TMDBToken)
-		srv.TMDB, srv.Images.Fetch = api, api
-	} else {
-		log.Print("sin tmdbToken en config.json: no se identifican películas")
-	}
+	eng := &engine.Engine{AppDir: appDir, Store: st, ReadOnly: readOnly, Wikidata: wikidata.New(version)}
+	pending := created && !readOnly
+	eng.Start(cfg, pending)
 	if readOnly {
 		log.Print("el directorio de la app no es escribible: modo consulta")
-	} else {
-		runner := &identify.Runner{AppDir: appDir, Store: st, Wikidata: wikidata.New(version), Images: srv.Images,
-			Language: cfg.Language, Prefetch: cfg.ImagePrefetch}
-		if api != nil {
-			runner.TMDB = api // only when set: a nil *tmdb.Client in the interface would not read as "no token"
-		}
-		srv.Identifier = runner
-		srv.Scanner = &scan.Scanner{AppDir: appDir, Roots: cfg.Roots, Store: st, OnDone: runner.Trigger}
-		go func() {
-			if err := srv.Scanner.Run(context.Background()); err != nil {
-				log.Printf("escaneo: %v", err)
-			}
-		}()
 	}
-	return srv, st.Close, nil
+	if pending {
+		log.Print("primer uso: elegí las carpetas y el token en el navegador")
+	}
+	srv = &server.Server{AppDir: appDir, Store: st, ReadOnly: readOnly, Opener: platform.Open, Revealer: platform.Reveal,
+		Engine: eng}
+	return srv, func() error {
+		eng.Current().Stop()
+		return st.Close()
+	}, nil
 }
 
 // openStore opens the catalog. In read-only mode with no catalog file yet it

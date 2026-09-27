@@ -3,9 +3,7 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"io/fs"
 	"log"
 	"net"
@@ -13,28 +11,28 @@ import (
 	"strings"
 
 	"cinexplorer/internal/appdir"
+	"cinexplorer/internal/engine"
 	"cinexplorer/internal/identify"
-	"cinexplorer/internal/images"
 	"cinexplorer/internal/scan"
 	"cinexplorer/internal/store"
 )
 
 type Server struct {
 	AppDir   string
-	Roots    []string // catalog-form paths, as in config.json
 	Store    *store.Store
-	Scanner  *scan.Scanner // nil in read-only mode
 	ReadOnly bool
 	Opener   func(target string) error
 	Revealer func(target string) error
-
-	TMDB       identify.API     // nil without a TMDB token
-	Identifier *identify.Runner // nil in read-only mode
-	Images     *images.Cache
-	Language   string
+	// Engine holds what config.json decides (roots, TMDB, scanner,
+	// identification, images, language); handlers read it through rt.
+	Engine *engine.Engine
 
 	Static fs.FS // the web app; nil: the embedded build
 }
+
+// rt is the runtime in use. A handler reads it once: settings saved during
+// the request replace it, they do not change it.
+func (s *Server) rt() *engine.Runtime { return s.Engine.Current() }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -96,16 +94,17 @@ func jsonOnly(h http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	rt := s.rt()
 	var st scan.Status
-	if s.Scanner != nil {
-		st = s.Scanner.Status()
+	if rt.Scanner != nil {
+		st = rt.Scanner.Status()
 	}
 	var id *identify.Status
-	if s.Identifier != nil {
-		st := s.Identifier.Status()
+	if rt.Identifier != nil {
+		st := rt.Identifier.Status()
 		id = &st
 	}
-	writeJSON(w, map[string]any{"readOnly": s.ReadOnly, "scan": st, "identify": id})
+	writeJSON(w, map[string]any{"readOnly": s.ReadOnly, "setupPending": s.Engine.SetupPending(), "scan": st, "identify": id})
 }
 
 func (s *Server) versions(w http.ResponseWriter, r *http.Request) {
@@ -118,15 +117,12 @@ func (s *Server) versions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rescan(w http.ResponseWriter, r *http.Request) {
-	if s.ReadOnly || s.Scanner == nil {
+	rt := s.rt()
+	if s.ReadOnly || rt.Scanner == nil {
 		http.Error(w, "modo consulta: el catálogo no se puede modificar", http.StatusConflict)
 		return
 	}
-	go func() {
-		if err := s.Scanner.Run(context.Background()); err != nil && !errors.Is(err, scan.ErrBusy) {
-			log.Printf("escaneo: %v", err)
-		}
-	}()
+	rt.Scan()
 	w.WriteHeader(http.StatusAccepted)
 }
 

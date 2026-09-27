@@ -10,6 +10,8 @@ import (
 
 	"cinexplorer/internal/appdir"
 	"cinexplorer/internal/catalog"
+	"cinexplorer/internal/config"
+	"cinexplorer/internal/engine"
 	"cinexplorer/internal/grouping"
 	"cinexplorer/internal/nameparse"
 	"cinexplorer/internal/scan"
@@ -37,6 +39,8 @@ func newServer(t *testing.T) (*Server, *[]string) {
 		Opener:   func(p string) error { opened = append(opened, p); return nil },
 		Revealer: func(p string) error { opened = append(opened, "reveal:"+p); return nil },
 	}
+	s.Engine = &engine.Engine{AppDir: s.AppDir, Store: st}
+	s.Engine.Use(&engine.Runtime{Config: config.Config{Roots: []string{"../cine"}, Language: "es-ES"}})
 	return s, &opened
 }
 
@@ -125,14 +129,14 @@ func TestDuplicatesEndpoint(t *testing.T) {
 
 func TestScanRunsWhenWritable(t *testing.T) {
 	s, _ := newServer(t)
-	s.Scanner = &scan.Scanner{AppDir: s.AppDir, Store: s.Store}
+	s.rt().Scanner = &scan.Scanner{AppDir: s.AppDir, Store: s.Store}
 	rec := request(s.Handler(), "POST", "/api/scan", "{}", "application/json", "127.0.0.1")
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		st := s.Scanner.Status()
+		st := s.rt().Scanner.Status()
 		if !st.Running && !st.Finished.IsZero() {
 			return
 		}
@@ -164,7 +168,7 @@ func TestVersionsEndpointIncludesTechnicalFields(t *testing.T) {
 
 func TestStatusReportsProbeProgress(t *testing.T) {
 	s, _ := newServer(t)
-	s.Scanner = &scan.Scanner{}
+	s.rt().Scanner = &scan.Scanner{}
 	rec := request(s.Handler(), "GET", "/api/status", "", "", "127.0.0.1:8080")
 	var body struct {
 		Scan map[string]any `json:"scan"`

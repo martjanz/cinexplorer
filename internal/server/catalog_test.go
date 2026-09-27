@@ -16,12 +16,12 @@ import (
 // ../cine-ordenar, as a second version.
 func addCopy(t *testing.T, s *Server) {
 	t.Helper()
-	s.Roots = []string{"../cine", "../cine-ordenar"}
+	s.rt().Config.Roots = []string{"../cine", "../cine-ordenar"}
 	const copyPath = "../cine-ordenar/Amarcord.mkv"
 	if err := s.Store.SyncFiles([]store.FileRow{
 		{Path: moviePath, Size: 10, MTime: 1, Fingerprint: "f1", Kind: "video"},
 		{Path: copyPath, Size: 10, MTime: 1, Fingerprint: "f1", Kind: "video"},
-	}, s.Roots); err != nil {
+	}, s.rt().Config.Roots); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Store.ReplaceVersions([]grouping.Version{
@@ -133,7 +133,7 @@ func TestMoviesEndpoint(t *testing.T) {
 	if getJSON(t, s, "/api/movies?q=amarcord", &refs); len(refs) != 0 {
 		t.Fatalf("before identifying: %+v", refs)
 	}
-	s.Identifier.Adopt(context.Background(), 7857)
+	s.rt().Identifier.Adopt(context.Background(), 7857)
 	s.Store.SetCorrection("f1", store.StatusManual, 7857)
 	if getJSON(t, s, "/api/movies?q=AMARCORD&near=f1", &refs); len(refs) != 1 || refs[0].TMDBID != 7857 {
 		t.Fatalf("suggestions %+v", refs)

@@ -13,7 +13,8 @@ import (
 )
 
 // TestSmoke runs the app as a first start would: an app directory next to a
-// movie folder, no config.json and no TMDB token.
+// movie folder, no config.json and no TMDB token; then the settings are
+// saved as proposed.
 func TestSmoke(t *testing.T) {
 	disk := t.TempDir()
 	appDir := filepath.Join(disk, "cinexplorer")
@@ -32,8 +33,23 @@ func TestSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeStore()
+	// First start: nothing saved or scanned until the settings are.
+	time.Sleep(50 * time.Millisecond)
+	if !srv.Engine.SetupPending() || !srv.Engine.Current().Scanner.Status().Finished.IsZero() {
+		t.Fatal("scanned before the first-use settings")
+	}
+	if _, err := os.Stat(filepath.Join(appDir, "config.json")); err == nil {
+		t.Fatal("config.json written before the first-use settings")
+	}
+	cfg := srv.Engine.Current().Config
+	if len(cfg.Roots) != 1 || cfg.Roots[0] != "../cine" || cfg.Language != "es-AR" {
+		t.Fatalf("proposed %+v", cfg)
+	}
+	if err := srv.Engine.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.Now().Add(10 * time.Second)
-	for st := srv.Scanner.Status(); st.Running || st.Finished.IsZero(); st = srv.Scanner.Status() {
+	for st := srv.Engine.Current().Scanner.Status(); st.Running || st.Finished.IsZero(); st = srv.Engine.Current().Scanner.Status() {
 		if time.Now().After(deadline) {
 			t.Fatalf("scan did not finish: %+v", st)
 		}

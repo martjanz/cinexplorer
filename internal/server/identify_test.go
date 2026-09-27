@@ -52,9 +52,10 @@ func identifyServer(t *testing.T) (*Server, *fakeTMDB) {
 	t.Helper()
 	s, _ := newServer(t)
 	f := &fakeTMDB{}
-	s.TMDB, s.Language = f, "es-ES"
-	s.Identifier = &identify.Runner{Store: s.Store, TMDB: f, Language: "es-ES"}
-	s.Images = &images.Cache{Dir: t.TempDir(), Fetch: f}
+	rt := s.rt()
+	rt.TMDB = f
+	rt.Identifier = &identify.Runner{Store: s.Store, TMDB: f, Language: "es-ES"}
+	rt.Images = &images.Cache{Dir: t.TempDir(), Fetch: f}
 	return s, f
 }
 
@@ -131,7 +132,7 @@ func TestSearchEndpoint(t *testing.T) {
 			t.Fatalf("%s: %s", q, rec.Body)
 		}
 	}
-	s.TMDB = nil
+	s.rt().TMDB = nil
 	if rec := request(s.Handler(), "GET", "/api/tmdb/search?q=x", "", "", "127.0.0.1"); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("without token: %d", rec.Code)
 	}
@@ -146,10 +147,10 @@ func TestImageEndpoint(t *testing.T) {
 	if b := body("/img/poster/7857.jpg?p=/other.jpg"); !strings.HasSuffix(b, "/other.jpg") {
 		t.Fatalf("candidate poster %q", b)
 	}
-	if s.Images.Has(images.Poster, 7857, "/other.jpg") {
+	if s.rt().Images.Has(images.Poster, 7857, "/other.jpg") {
 		t.Fatal("candidate preview was cached")
 	}
-	s.Identifier.Adopt(context.Background(), 7857)
+	s.rt().Identifier.Adopt(context.Background(), 7857)
 	if code := get("/img/backdrop/7857.jpg"); code != 200 {
 		t.Fatalf("backdrop %d", code)
 	}
@@ -204,7 +205,7 @@ func TestIdentifyUnknownFingerprintSkipsTMDB(t *testing.T) {
 
 func TestIdentifyWithoutToken(t *testing.T) {
 	s, _ := identifyServer(t)
-	s.Identifier.TMDB = nil
+	s.rt().Identifier.TMDB = nil
 	if code := post(t, s, `{"fingerprint":"f1","action":"movie","tmdbId":7857}`); code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d", code)
 	}

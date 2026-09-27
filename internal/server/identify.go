@@ -20,7 +20,8 @@ var imdbIDRe = regexp.MustCompile(`^tt\d{7,8}$`)
 // search is the manual TMDB search: by title (and optional year), or by
 // IMDb id when q is one.
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	if s.TMDB == nil {
+	rt := s.rt()
+	if rt.TMDB == nil {
 		http.Error(w, "sin token de TMDB", http.StatusServiceUnavailable)
 		return
 	}
@@ -30,7 +31,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if imdbIDRe.MatchString(q) {
 		query = identify.Query{IMDbID: q}
 	}
-	cands, _, err := identify.Search(r.Context(), s.TMDB, s.Language, query)
+	cands, _, err := identify.Search(r.Context(), rt.TMDB, rt.Config.Language, query)
 	if err != nil {
 		tmdbError(w, err)
 		return
@@ -40,7 +41,8 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 
 // identify records the user's decision about a version's fingerprint.
 func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
-	if s.ReadOnly || s.Identifier == nil {
+	runner := s.rt().Identifier
+	if s.ReadOnly || runner == nil {
 		http.Error(w, "modo consulta: el catálogo no se puede modificar", http.StatusConflict)
 		return
 	}
@@ -69,7 +71,7 @@ func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "falta tmdbId", http.StatusBadRequest)
 			return
 		}
-		if err := s.Identifier.Adopt(r.Context(), req.TMDBID); err != nil {
+		if err := runner.Adopt(r.Context(), req.TMDBID); err != nil {
 			tmdbError(w, err)
 			return
 		}
@@ -78,13 +80,13 @@ func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 			status = store.StatusExtra
 		}
 		if err = s.Store.SetCorrection(req.Fingerprint, status, req.TMDBID); err == nil {
-			s.Identifier.Trigger() // Wikidata and images for the new movie
+			runner.Trigger() // Wikidata and images for the new movie
 		}
 	case "ignore":
 		err = s.Store.SetCorrection(req.Fingerprint, store.StatusIgnored, 0)
 	case "reset":
 		if err = s.Store.ResetIdentification(req.Fingerprint); err == nil {
-			s.Identifier.Trigger()
+			runner.Trigger()
 		}
 	default:
 		http.Error(w, "acción desconocida", http.StatusBadRequest)
@@ -123,7 +125,8 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 	kind := images.Kind(r.PathValue("kind"))
 	idText, ok := strings.CutSuffix(r.PathValue("file"), ".jpg")
 	id, err := strconv.Atoi(idText)
-	if s.Images == nil || !images.ValidKind(kind) || !ok || err != nil || id <= 0 {
+	cache := s.rt().Images
+	if cache == nil || !images.ValidKind(kind) || !ok || err != nil || id <= 0 {
 		http.NotFound(w, r)
 		return
 	}
@@ -133,27 +136,27 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b []byte
-	cache := "no-cache"
+	control := "no-cache"
 	if found {
 		path := m.PosterPath
 		if kind == images.Backdrop {
 			path = m.BackdropPath
 		}
-		b, err = s.Images.Get(r.Context(), kind, id, path)
+		b, err = cache.Get(r.Context(), kind, id, path)
 		// ?v= names the image at one path: the URL changes with the path.
 		if v := r.URL.Query().Get("v"); v != "" && v == images.Version(path) {
-			cache = "public, max-age=31536000, immutable"
+			control = "public, max-age=31536000, immutable"
 		}
 	} else {
 		// ?p= comes from the page (any page can send it): shown, never cached.
-		b, err = s.Images.Preview(r.Context(), kind, id, r.URL.Query().Get("p"))
-		cache = "max-age=86400"
+		b, err = cache.Preview(r.Context(), kind, id, r.URL.Query().Get("p"))
+		control = "max-age=86400"
 	}
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", http.DetectContentType(b))
-	w.Header().Set("Cache-Control", cache)
+	w.Header().Set("Cache-Control", control)
 	w.Write(b)
 }

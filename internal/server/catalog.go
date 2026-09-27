@@ -26,7 +26,7 @@ func (s *Server) explore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := catalog.ParseQuery(r.URL.Query())
-	all := catalog.Items(snap, s.Roots)
+	all := catalog.Items(snap, s.rt().Config.Roots)
 	items := catalog.Filter(all, q.Facets)
 	catalog.Sort(items, q.Order, q.Dir)
 	writeJSON(w, map[string]any{"total": len(items), "query": q, "items": items, "facets": catalog.Counts(all, q.Facets)})
@@ -77,7 +77,7 @@ func (s *Server) duplicates(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, catalog.Duplicates(snap, s.Roots))
+	writeJSON(w, catalog.Duplicates(snap, s.rt().Config.Roots))
 }
 
 func (s *Server) unidentified(w http.ResponseWriter, r *http.Request) {
