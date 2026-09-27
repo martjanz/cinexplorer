@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"cinexplorer/internal/config"
+	"cinexplorer/internal/engine"
 	"cinexplorer/internal/httpx"
 	"cinexplorer/internal/tmdb"
 )
@@ -140,26 +143,35 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON inválido", http.StatusBadRequest)
 		return
 	}
-	cur := s.rt().Config
-	if err := config.CheckRoots(s.AppDir, req.Roots, cur.Roots); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	// cur (and so "keep the saved token/language") is resolved inside Update,
+	// under the same lock Apply uses: a concurrent PUT can't be undone by
+	// this one reading a token or language that's about to change.
+	err := s.Engine.Update(func(cur config.Config) (config.Config, error) {
+		if err := config.CheckRoots(s.AppDir, req.Roots, cur.Roots); err != nil {
+			return config.Config{}, &engine.ValidationError{Err: err}
+		}
+		if !slices.Contains(config.Languages, req.Language) && req.Language != cur.Language {
+			return config.Config{}, &engine.ValidationError{Err: fmt.Errorf("idioma desconocido: %s", req.Language)}
+		}
+		if req.ImagePrefetch != "" && !slices.Contains(config.PrefetchModes, req.ImagePrefetch) {
+			return config.Config{}, &engine.ValidationError{Err: fmt.Errorf("descarga de imágenes desconocida: %s", req.ImagePrefetch)}
+		}
+		cfg := config.Config{Roots: req.Roots, TMDBToken: cur.TMDBToken, Language: req.Language, ImagePrefetch: req.ImagePrefetch}
+		if req.Token != nil {
+			cfg.TMDBToken = strings.TrimSpace(*req.Token)
+		}
+		return cfg, nil
+	})
+	var verr *engine.ValidationError
+	switch {
+	case err == nil:
+		writeJSON(w, s.configView())
+	case errors.As(err, &verr):
+		http.Error(w, verr.Error(), http.StatusBadRequest)
+	case errors.Is(err, engine.ErrReadOnly):
+		http.Error(w, err.Error(), http.StatusConflict)
+	default:
+		log.Printf("no se pudo guardar config.json: %v", err)
+		http.Error(w, "no se pudo guardar config.json", http.StatusInternalServerError)
 	}
-	if !slices.Contains(config.Languages, req.Language) && req.Language != cur.Language {
-		http.Error(w, "idioma desconocido: "+req.Language, http.StatusBadRequest)
-		return
-	}
-	if req.ImagePrefetch != "" && !slices.Contains(config.PrefetchModes, req.ImagePrefetch) {
-		http.Error(w, "descarga de imágenes desconocida: "+req.ImagePrefetch, http.StatusBadRequest)
-		return
-	}
-	cfg := config.Config{Roots: req.Roots, TMDBToken: cur.TMDBToken, Language: req.Language, ImagePrefetch: req.ImagePrefetch}
-	if req.Token != nil {
-		cfg.TMDBToken = strings.TrimSpace(*req.Token)
-	}
-	if err := s.Engine.Apply(cfg); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, s.configView())
 }

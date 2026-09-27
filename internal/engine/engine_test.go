@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,8 @@ import (
 	"cinexplorer/internal/probe"
 	"cinexplorer/internal/store"
 )
+
+var errTest = errors.New("prueba")
 
 // newEngine makes <tmp>/cinexplorer next to cine/ and otro/, each with a
 // movie, and vacio/; and an engine over a fresh catalog.
@@ -135,6 +138,50 @@ func TestApplyReplacesRuntime(t *testing.T) {
 	waitScan(t, e)
 	if got := titles(t, e); len(got) != 0 {
 		t.Fatalf("titles %v", got)
+	}
+}
+
+// TestUpdateSeesCurrentConfig checks that Update hands f the configuration
+// in effect right now, under the same lock Apply uses, so resolving "keep
+// the saved token" against it can't race a concurrent Apply/Update.
+func TestUpdateSeesCurrentConfig(t *testing.T) {
+	e := newEngine(t, false)
+	e.Start(config.Config{Roots: []string{"../cine"}, TMDBToken: "tok1", Language: "es-AR"}, true)
+
+	var saw config.Config
+	err := e.Update(func(cur config.Config) (config.Config, error) {
+		saw = cur
+		cur.Language = "en-US" // keeps the token, like putConfig's token:null
+		return cur, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saw.TMDBToken != "tok1" || saw.Language != "es-AR" {
+		t.Fatalf("f saw %+v, want the config in effect before this Update", saw)
+	}
+	if got := e.Current().Config; got.TMDBToken != "tok1" || got.Language != "en-US" {
+		t.Fatalf("current %+v", got)
+	}
+}
+
+// TestUpdateValidationErrorLeavesRuntime checks that a rejecting f neither
+// saves config.json nor replaces the runtime.
+func TestUpdateValidationErrorLeavesRuntime(t *testing.T) {
+	e := newEngine(t, false)
+	e.Start(config.Config{Roots: []string{"../cine"}, Language: "es-AR"}, true)
+	old := e.Current()
+
+	wantErr := &ValidationError{Err: errTest}
+	err := e.Update(func(config.Config) (config.Config, error) { return config.Config{}, wantErr })
+	if err != wantErr {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if e.Current() != old {
+		t.Fatal("runtime replaced by a rejected Update")
+	}
+	if _, err := os.Stat(filepath.Join(e.AppDir, config.FileName)); err == nil {
+		t.Fatal("config.json written by a rejected Update")
 	}
 }
 

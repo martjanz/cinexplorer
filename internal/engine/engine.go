@@ -77,11 +77,35 @@ func (e *Engine) SetupPending() bool { return e.pending.Load() }
 // current one (cancelling its scan and identification), starts one built
 // from cfg and scans. cfg must be valid.
 func (e *Engine) Apply(cfg config.Config) error {
+	return e.Update(func(config.Config) (config.Config, error) { return cfg, nil })
+}
+
+// ValidationError marks a rejected configuration (not an I/O failure): Update
+// callers use it to tell "the request was invalid" from "saving failed".
+type ValidationError struct{ Err error }
+
+func (e *ValidationError) Error() string { return e.Err.Error() }
+func (e *ValidationError) Unwrap() error { return e.Err }
+
+// Update resolves the next configuration against the current one under the
+// same lock Apply uses, so a "keep the saved token/language" decision can
+// never race a concurrent PUT: f receives the configuration in effect right
+// now and returns what to save, or a *ValidationError if it rejects it. It
+// then saves and replaces the runtime exactly as Apply does.
+func (e *Engine) Update(f func(cur config.Config) (config.Config, error)) error {
 	if e.ReadOnly {
 		return ErrReadOnly
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	var cur config.Config
+	if old := e.current.Load(); old != nil {
+		cur = old.Config
+	}
+	cfg, err := f(cur)
+	if err != nil {
+		return err
+	}
 	if err := config.Save(e.AppDir, cfg); err != nil {
 		return err
 	}
