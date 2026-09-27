@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io/fs"
 	"log"
@@ -26,6 +27,9 @@ type Server struct {
 	// Engine holds what config.json decides (roots, TMDB, scanner,
 	// identification, images, language); handlers read it through rt.
 	Engine *engine.Engine
+	// VerifyToken asks TMDB whether it takes a token; nil means asking
+	// for a well-known movie.
+	VerifyToken func(ctx context.Context, token string) error
 
 	Static fs.FS // the web app; nil: the embedded build
 }
@@ -51,6 +55,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tmdb/search", s.search)
 	mux.HandleFunc("POST /api/identify", jsonOnly(s.identify))
 	mux.HandleFunc("GET /img/{kind}/{file}", s.image)
+	mux.HandleFunc("GET /api/config", s.getConfig)
+	mux.HandleFunc("PUT /api/config", jsonOnly(s.putConfig))
+	mux.HandleFunc("POST /api/config/root", jsonOnly(s.checkRoot))
+	mux.HandleFunc("POST /api/config/token", jsonOnly(s.checkToken))
 	return localOnly(mux)
 }
 
