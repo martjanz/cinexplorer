@@ -111,6 +111,18 @@ func TestScanInReadOnlyMode(t *testing.T) {
 	}
 }
 
+func TestScanBlockedWhileSetupPending(t *testing.T) {
+	s, _ := newServer(t)
+	s.Engine.Start(config.Config{Roots: []string{"../cine"}}, true) // no config.json yet
+	rec := request(s.Handler(), "POST", "/api/scan", "{}", "application/json", "127.0.0.1")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "asistente") {
+		t.Fatalf("body %s", rec.Body)
+	}
+}
+
 func TestDuplicatesEndpoint(t *testing.T) {
 	s, _ := newServer(t)
 	addCopy(t, s)

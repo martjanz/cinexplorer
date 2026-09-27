@@ -129,6 +129,10 @@ func (s *Server) versions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rescan(w http.ResponseWriter, r *http.Request) {
+	if s.Engine.SetupPending() {
+		http.Error(w, "falta completar el asistente de primer uso", http.StatusConflict)
+		return
+	}
 	rt := s.rt()
 	if s.ReadOnly || rt.Scanner == nil {
 		http.Error(w, "modo consulta: el catálogo no se puede modificar", http.StatusConflict)
