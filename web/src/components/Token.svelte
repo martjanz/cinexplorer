@@ -1,16 +1,13 @@
 <script>
+  import { untrack } from 'svelte'
   import { api } from '../lib/api.js'
 
   // token is the draft's: null keeps the saved one, "" removes it, text
   // replaces it. config tells whether one is saved.
   let { token = $bindable(null), config, disabled = false } = $props()
-  let mode = $state('keep') // keep | edit | remove
+  let mode = $state(untrack(() => config.hasToken) ? 'keep' : 'edit') // keep | edit | remove
   let text = $state('')
   let check = $state(null) // null, 'checking', true, false, 'unknown'
-
-  $effect(() => {
-    mode = config.hasToken ? 'keep' : 'edit'
-  })
 
   $effect(() => {
     if (mode === 'edit') token = text.trim() ? text : null
