@@ -25,6 +25,14 @@ func (s *Store) read(f func(tx querier) error) error {
 	return f(tx)
 }
 
+// Changes is the change counter of Snapshot, read on its own: a cheap way to
+// know whether what was derived from the last snapshot is still current.
+func (s *Store) Changes() (int64, error) {
+	var n int64
+	err := s.db.QueryRow(`SELECT total_changes()`).Scan(&n)
+	return n, err
+}
+
 // Snapshot reads versions, identifications and movies in one transaction.
 func (s *Store) Snapshot() (Snapshot, error) {
 	snap := Snapshot{Identifications: map[string]*Identification{}, Movies: map[int]Movie{}}

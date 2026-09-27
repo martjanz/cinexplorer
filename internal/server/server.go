@@ -32,6 +32,8 @@ type Server struct {
 	VerifyToken func(ctx context.Context, token string) error
 
 	Static fs.FS // the web app; nil: the embedded build
+
+	finder searchState
 }
 
 // rt is the runtime in use. A handler reads it once: settings saved during
@@ -55,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tmdb/search", s.search)
 	mux.HandleFunc("POST /api/identify", jsonOnly(s.identify))
 	mux.HandleFunc("GET /img/{kind}/{file}", s.image)
+	mux.HandleFunc("GET /api/search", s.find)
 	mux.HandleFunc("GET /api/config", s.getConfig)
 	mux.HandleFunc("PUT /api/config", jsonOnly(s.putConfig))
 	mux.HandleFunc("POST /api/config/root", jsonOnly(s.checkRoot))

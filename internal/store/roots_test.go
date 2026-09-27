@@ -50,4 +50,7 @@ func TestSnapshotChanges(t *testing.T) {
 	if c.Changes == b.Changes {
 		t.Fatalf("a write left changes at %d", c.Changes)
 	}
+	if n, err := s.Changes(); err != nil || n != c.Changes {
+		t.Fatalf("Changes() = %d, %v; snapshot %d", n, err, c.Changes)
+	}
 }
