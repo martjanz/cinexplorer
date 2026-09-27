@@ -1,5 +1,5 @@
 <script>
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { api } from '../lib/api.js'
   import { app, notify } from '../lib/app.svelte.js'
   import { fileName, mainFile, percent } from '../lib/format.js'
@@ -11,16 +11,25 @@
   let { items, onresolved } = $props()
 
   let current = $state(0)
+  let key = null // fingerprint of the current item
   let rows = $state([])
 
   const readOnly = $derived(!!app.status?.readOnly)
 
+  // The current item stays the same one when the queue reloads; when it
+  // leaves the queue, the next one takes its place.
   $effect(() => {
-    if (current >= items.length) current = Math.max(0, items.length - 1)
+    const list = items
+    untrack(() => {
+      const i = list.findIndex((it) => it.fingerprint === key)
+      current = i >= 0 ? i : Math.min(current, Math.max(0, list.length - 1))
+      key = list[current]?.fingerprint ?? null
+    })
   })
 
   async function select(i) {
     current = i
+    key = items[i].fingerprint
     await tick()
     rows[i]?.scrollIntoView({ block: 'nearest' })
   }

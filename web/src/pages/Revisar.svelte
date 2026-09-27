@@ -9,12 +9,16 @@
 
   let queue = $state(null)
   let dups = $state(null)
+  let loads = 0
 
   async function load() {
+    const id = ++loads
     try {
-      ;[queue, dups] = await Promise.all([api.unidentified(), api.duplicates()])
+      const [q, d] = await Promise.all([api.unidentified(), api.duplicates()])
+      if (id !== loads) return // a newer request is on its way
+      ;[queue, dups] = [q, d]
     } catch (e) {
-      notify(e.message)
+      if (id === loads) notify(e.message)
     }
   }
 
@@ -23,8 +27,10 @@
     load()
   })
 
-  // An item left the queue: count it out without reloading the list.
+  // An item left the queue: count it out without reloading the list. A
+  // load already on its way may predate the decision: it is dropped.
   function resolved(fingerprint) {
+    loads++
     queue.items = queue.items.filter((it) => it.fingerprint !== fingerprint)
   }
 </script>
