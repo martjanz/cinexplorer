@@ -6,7 +6,7 @@
   let { query, facets, total, onchange } = $props()
 
   let open = $state(null) // name of the open menu, "more", or null
-  let filter = $state('')
+  let filters = $state({}) // text filter of each facet's menu: "Más" shows several at once
   let bar = $state()
 
   const main = FACETS.filter((f) => !f.more)
@@ -15,7 +15,7 @@
 
   function toggle(name) {
     open = open === name ? null : name
-    filter = ''
+    filters = {}
   }
 
   function choose(name, value) {
@@ -25,7 +25,7 @@
 
   function values(name) {
     const all = facets?.[name] ?? []
-    const f = filter.trim().toLowerCase()
+    const f = (filters[name] ?? '').trim().toLowerCase()
     if (!f) return all
     return all.filter((v) => valueLabel(name, v.value, v).toLowerCase().includes(f))
   }
@@ -44,7 +44,7 @@
   {@const list = values(name)}
   {#if (facets?.[name] ?? []).length > 12}
     <!-- svelte-ignore a11y_autofocus -->
-    <input type="search" placeholder="Filtrar…" bind:value={filter} autofocus />
+    <input type="search" placeholder="Filtrar…" bind:value={filters[name]} autofocus />
   {/if}
   <ul>
     {#each list as v (v.value)}

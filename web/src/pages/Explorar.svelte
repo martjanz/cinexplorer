@@ -13,6 +13,7 @@
   let shown = $state(BATCH)
   let sentinel = $state()
   let loadedSearch = null
+  let loads = 0
 
   const query = $derived(parse(route.search))
 
@@ -25,6 +26,7 @@
   })
 
   async function load(search) {
+    const id = ++loads
     let d
     try {
       d = await api.explore(search)
@@ -32,7 +34,7 @@
       notify(e.message)
       return
     }
-    if (search !== route.search || route.path !== '/explorar') return // a newer request is on its way
+    if (id !== loads || route.path !== '/explorar') return // a newer request is on its way
     const fresh = search !== loadedSearch
     data = d
     loadedSearch = search
