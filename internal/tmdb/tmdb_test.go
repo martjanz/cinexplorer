@@ -133,3 +133,16 @@ func TestImage(t *testing.T) {
 		t.Fatalf("got %q, %v", b, err)
 	}
 }
+
+func TestTranslations(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/3/movie/7857/translations" {
+			t.Errorf("request %s", r.URL)
+		}
+		w.Write([]byte(`{"id":7857,"translations":[{"iso_3166_1":"MX","iso_639_1":"es","name":"Español","english_name":"Spanish","data":{"homepage":"","overview":"Rimini.","runtime":123,"tagline":"","title":"Amarcord"}}]}`))
+	})
+	ts, err := c.Translations(context.Background(), 7857)
+	if err != nil || len(ts) != 1 || ts[0].Tag() != "es-MX" || ts[0].Data.Title != "Amarcord" || ts[0].Data.Overview != "Rimini." {
+		t.Fatalf("got %+v, %v", ts, err)
+	}
+}

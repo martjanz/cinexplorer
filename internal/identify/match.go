@@ -36,6 +36,7 @@ type API interface {
 	SearchMovie(ctx context.Context, query string, year int, lang string) ([]tmdb.Result, error)
 	FindIMDb(ctx context.Context, imdbID, lang string) ([]tmdb.Result, error)
 	Movie(ctx context.Context, id int, lang string) (tmdb.Details, error)
+	Translations(ctx context.Context, id int) ([]tmdb.Translation, error)
 }
 
 // Query is what is known about a version from its names and .nfo.

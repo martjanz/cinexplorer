@@ -55,8 +55,8 @@ func fixture(t *testing.T) (*Runner, *fakeAPI, *fakeWikidata) {
 		movies: map[string]tmdb.Details{
 			"7857|es-ES": details(7857, "Amarcord", "1973-12-18", "Rimini.", "Federico Fellini"),
 			"1398|es-ES": details(1398, "Stalker", "1979-05-25", "", "Andrei Tarkovsky"),
-			"1398|en-US": details(1398, "Stalker", "1979-05-25", "The Zone.", "Andrei Tarkovsky"),
 		},
+		trans: map[int][]tmdb.Translation{1398: {tr("en-US", "Stalker", "The Zone.")}},
 	}
 	wd := &fakeWikidata{ents: map[int]wikidata.Entity{
 		1398: {QID: "Q498906", IMDbID: "tt0079944", Countries: []string{"SU"}, Year: 1979},
@@ -114,10 +114,10 @@ func TestRunIdentifiesAndEnriches(t *testing.T) {
 	if s.Overview != "The Zone." || s.Language != "es-ES" || s.WikidataID != "Q498906" || !slices.Equal(s.Countries, []string{"SU"}) {
 		t.Fatalf("stalker movie %+v", s)
 	}
-	// Amarcord's details came with the match (no director parsed, so no),
-	// Stalker needed es-ES plus en-US for the empty overview.
-	if n := api.called("movie 1398|"); n != 2 {
-		t.Fatalf("stalker fetched %d times: %v", n, api.calls)
+	// Amarcord's details came with the match; Stalker's were fetched in
+	// es-ES. Each needed its translations (the overview came in English).
+	if api.called("movie 1398|") != 1 || api.called("movie 7857|") != 1 || api.called("translations ") != 2 {
+		t.Fatalf("calls %v", api.calls)
 	}
 	if len(wd.calls) != 1 || len(wd.calls[0]) != 2 {
 		t.Fatalf("wikidata calls %v", wd.calls)

@@ -293,8 +293,9 @@ func (r *Runner) Adopt(ctx context.Context, id int) error {
 	return r.Store.SaveMovie(m)
 }
 
-// fetchMovie gets a movie in the configured language, completing an empty
-// title or overview in English.
+// fetchMovie gets a movie in the configured language. Titles and overviews
+// TMDB has not translated to it are taken from the closest translation
+// (Chain), the overview finally in English.
 func (r *Runner) fetchMovie(ctx context.Context, id int, fetched map[int]tmdb.Details) (store.Movie, error) {
 	d, ok := fetched[id]
 	if !ok {
@@ -304,17 +305,12 @@ func (r *Runner) fetchMovie(ctx context.Context, id int, fetched map[int]tmdb.De
 		}
 	}
 	m := movieFrom(d, r.Language)
-	if r.Language != fallbackLang && (m.Title == "" || m.Overview == "") {
-		en, err := r.TMDB.Movie(ctx, id, fallbackLang)
+	if r.Language != fallbackLang {
+		ts, err := r.TMDB.Translations(ctx, id)
 		if err != nil {
 			return store.Movie{}, err
 		}
-		if m.Title == "" {
-			m.Title = en.Title
-		}
-		if m.Overview == "" {
-			m.Overview = en.Overview
-		}
+		translate(&m, ts, r.Language)
 	}
 	return m, nil
 }

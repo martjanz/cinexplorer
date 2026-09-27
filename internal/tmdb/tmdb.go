@@ -108,6 +108,29 @@ func year(date string) int {
 	return y
 }
 
+// Translation is a movie's texts in one language and country
+// (GET /movie/{id}/translations). Empty fields were not translated.
+type Translation struct {
+	Language string `json:"iso_639_1"`  // "es"
+	Country  string `json:"iso_3166_1"` // "AR"
+	Data     struct {
+		Title    string `json:"title"`
+		Overview string `json:"overview"`
+	} `json:"data"`
+}
+
+// Tag is the translation's language as TMDB takes it ("es-AR").
+func (t Translation) Tag() string { return t.Language + "-" + t.Country }
+
+// Translations returns every translation of a movie's title and overview.
+func (c *Client) Translations(ctx context.Context, id int) ([]Translation, error) {
+	var out struct {
+		Translations []Translation `json:"translations"`
+	}
+	err := c.get(ctx, "/movie/"+strconv.Itoa(id)+"/translations", &out)
+	return out.Translations, err
+}
+
 // SearchMovie searches by title; year 0 means any year. Adult titles are
 // included: the collection being catalogued is the user's own, not a public
 // listing, so TMDB's default filter (which would hide a real owned title

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"cinexplorer/internal/tmdb"
@@ -16,8 +17,9 @@ type fakeAPI struct {
 	search map[string][]tmdb.Result
 	find   map[string][]tmdb.Result
 	movies map[string]tmdb.Details // "id|lang"
-	err    error                   // returned by every call when set
-	fail   map[string]error        // returned by the search with that key
+	trans  map[int][]tmdb.Translation
+	err    error            // returned by every call when set
+	fail   map[string]error // returned by the search with that key
 	calls  []string
 }
 
@@ -56,6 +58,21 @@ func (f *fakeAPI) Movie(ctx context.Context, id int, lang string) (tmdb.Details,
 		return d, tmdb.ErrNotFound
 	}
 	return d, nil
+}
+
+func (f *fakeAPI) Translations(ctx context.Context, id int) ([]tmdb.Translation, error) {
+	if err := f.record("translations " + strconv.Itoa(id)); err != nil {
+		return nil, err
+	}
+	return f.trans[id], nil
+}
+
+// tr is a translation for fakeAPI.trans.
+func tr(tag, title, overview string) tmdb.Translation {
+	var t tmdb.Translation
+	t.Language, t.Country, _ = strings.Cut(tag, "-")
+	t.Data.Title, t.Data.Overview = title, overview
+	return t
 }
 
 func (f *fakeAPI) called(prefix string) int {

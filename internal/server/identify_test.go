@@ -39,6 +39,10 @@ func (f *fakeTMDB) Movie(ctx context.Context, id int, lang string) (tmdb.Details
 		PosterPath: "/p.jpg", BackdropPath: "/b.jpg"}, nil
 }
 
+func (f *fakeTMDB) Translations(ctx context.Context, id int) ([]tmdb.Translation, error) {
+	return nil, nil
+}
+
 func (f *fakeTMDB) Image(ctx context.Context, path, size string) ([]byte, error) {
 	f.images = append(f.images, size+path)
 	return []byte("\xff\xd8\xff\xe0 jpeg " + path), nil
