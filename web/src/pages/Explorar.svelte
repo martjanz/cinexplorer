@@ -31,7 +31,7 @@
     try {
       d = await api.explore(search)
     } catch (e) {
-      notify(e.message)
+      if (id === loads) notify(e.message)
       return
     }
     if (id !== loads || route.path !== '/explorar') return // a newer request is on its way
