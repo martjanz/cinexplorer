@@ -23,10 +23,18 @@ El proyecto avanza por etapas (ver `docs/superpowers/specs/`):
 | 2. Datos técnicos | lectura de encabezados MKV/MP4/AVI/IFO, `ffprobe` opcional, mejor versión | ✅ |
 | 3. Identificación | TMDB + Wikidata, puntaje de confianza, correcciones, afiches | ✅ |
 | 4a. Catálogo navegable | interfaz Svelte: Explorar con facetas, Ficha, Revisar | ✅ |
-| 4b. Descubrimiento | Inicio, búsqueda instantánea, asistente de primer uso | pendiente |
+| 4b. Descubrimiento | Inicio, búsqueda instantánea, asistente de primer uso, Ajustes | ✅ |
 | 5. Curaduría | listas, etiquetas, importación de `Collections/` | pendiente |
 
-La interfaz tiene tres partes:
+La interfaz tiene estas partes:
+
+- **Inicio:** filas de imágenes de escena al estilo de MUBI: lo agregado
+  recientemente y, sorteadas en cada visita, una década, un director, un país,
+  un género y una colección. Cada fila lleva a Explorar con ese filtro. El
+  botón ↻ sortea otras.
+- **Búsqueda** (la lupa, o Ctrl+K / ⌘K): resultados mientras escribís, por
+  título, título original, director, reparto o nombre de archivo, sin importar
+  tildes ni mayúsculas. Enter abre la página con todos los resultados.
 
 - **Explorar:** la colección como grilla de afiches, con facetas combinables
   (década y año, director, género, país, resolución, subtítulos, idioma
@@ -42,6 +50,9 @@ La interfaz tiene tres partes:
   es una película", "es un extra de…", con atajos de teclado) y los
   **Duplicados** (copias idénticas y varias versiones de una película, con el
   espacio que se podría recuperar).
+
+- **Ajustes** (el engranaje): carpetas, token de TMDB, idioma de los datos y
+  descarga de imágenes. Los cambios se aplican sin reiniciar la app.
 
 Un indicador arriba a la derecha muestra el escaneo y la identificación en
 curso; las páginas se actualizan solas a medida que avanzan.
@@ -89,32 +100,39 @@ lado, la carpeta de la app:
      no está firmado. Si macOS sigue bloqueándolo:
      `xattr -d com.apple.quarantine cinexplorer-macos`.
    - Linux: `./cinexplorer-linux` (puede hacer falta `chmod +x` antes).
-3. Se abre el navegador con la app. En el primer uso se crea `config.json` con
-   las carpetas hermanas como raíces (ignora las ocultas y las del sistema, como
-   `$RECYCLE.BIN` o `System Volume Information`).
-4. Cerrá la app, agregá tu token de TMDB en `config.json` y volvé a abrirla. El
-   primer escaneo analiza todo; los siguientes solo lo que cambió.
+3. Se abre el navegador con el asistente de primer uso, en tres pasos:
+   - **Carpetas:** propone las que están al lado de `cinexplorer/` (ignora las
+     ocultas y las del sistema, como `$RECYCLE.BIN` o `System Volume
+     Information`); se pueden desmarcar o agregar otras escribiendo la ruta.
+   - **Token de TMDB:** pegalo y verificalo (ver [Requisitos](#requisitos)).
+     Se puede seguir sin token y cargarlo después en Ajustes.
+   - **Idioma** de títulos y sinopsis: español (Argentina), inglés (EE. UU.) o
+     portugués (Brasil).
+4. Al terminar se guarda `config.json` y empieza el escaneo; el Inicio se va
+   llenando a medida que se identifican las películas. El primer escaneo
+   analiza todo; los siguientes solo lo que cambió.
 
 Para salir, cerrá la ventana de la terminal (o Ctrl+C).
 
 ## Configuración
 
-`config.json`, junto al ejecutable:
+Todo se cambia desde **Ajustes**, en la app. Queda guardado en `config.json`,
+junto al ejecutable:
 
 ```json
 {
   "roots": ["../cine", "../cine-ordenar"],
   "tmdbToken": "eyJ…",
-  "language": "es-ES",
+  "language": "es-AR",
   "imagePrefetch": "none"
 }
 ```
 
 | Campo | Qué es |
 |---|---|
-| `roots` | Carpetas a escanear, **relativas a la carpeta de la app** y con `/` como separador. Una raíz que no está disponible (por ejemplo, un disco desenchufado) se saltea sin tocar lo que ya había en el catálogo. |
+| `roots` | Carpetas a escanear, **relativas a la carpeta de la app** y con `/` como separador (tienen que estar en el mismo disco que la app). Una raíz que no está disponible (por ejemplo, un disco desenchufado) se saltea sin tocar lo que ya había en el catálogo. Los archivos de una raíz que se quita pasan a "no encontrado". |
 | `tmdbToken` | Token de lectura de TMDB (v4). Vacío: no se identifica. |
-| `language` | Idioma de títulos, sinopsis y géneros, en formato TMDB (`es-ES`, `es-MX`, `en-US`, `pt-BR`…). Si lo cambiás, los datos se vuelven a pedir en el nuevo idioma. |
+| `language` | Idioma de títulos, sinopsis y géneros: `es-AR` (por defecto), `en-US` o `pt-BR`. Lo que TMDB no tiene traducido a esa variante se toma de la más cercana (para `es-AR`: `es-MX`, después `es-ES`) y, la sinopsis, en último caso en inglés. Si lo cambiás, los datos se vuelven a pedir en el nuevo idioma. |
 | `imagePrefetch` | `"none"` (por defecto): las imágenes se bajan al verlas por primera vez. `"posters"`: los afiches se bajan por adelantado. `"all"`: afiches y escenas por adelantado, para usar la app sin red; son varios cientos de MB para unas miles de películas. |
 
 ### Línea de comandos
@@ -123,7 +141,7 @@ Para salir, cerrá la ventana de la terminal (o Ctrl+C).
 |---|---|
 | `-dir <ruta>` | Carpeta de la app (config, catálogo, caché). Por defecto, la del ejecutable. También se puede definir con la variable `CINEXPLORER_DIR`. |
 | `-port <n>` | Puerto HTTP. `0` (por defecto) elige uno libre. |
-| `-no-browser` | No abrir el navegador al arrancar. |
+| `-no-browser` | No abrir el navegador al arrancar. Sin `config.json`, la app espera que se complete el asistente en la dirección que muestra. |
 
 ## Cómo funciona
 
@@ -185,7 +203,8 @@ guardan.
 
 - A **TMDB** se le envían los títulos y años extraídos de los nombres de
   archivo, IMDb ids y los ids de TMDB de las películas identificadas, con tu
-  token.
+  token. Verificar el token en el asistente o en Ajustes pide una película
+  conocida (*Fight Club*).
 - A **Wikidata** se le envían ids de TMDB (consultas SPARQL anónimas).
 - Las imágenes se bajan de `image.tmdb.org`.
 - No se envía nada más: ni rutas, ni nombres de carpeta completos, ni datos
@@ -214,7 +233,11 @@ requieren `Content-Type: application/json`.
 
 | Método y ruta | Qué hace |
 |---|---|
-| `GET /api/status` | Estado del escaneo y de la identificación. |
+| `GET /api/status` | Estado del escaneo y de la identificación, y si falta el primer uso (`setupPending`). |
+| `GET /api/home?seed=` | Filas del Inicio (la misma semilla da las mismas filas). |
+| `GET /api/search?q=&limit=` | Búsqueda en el catálogo: ítems y directores que coinciden. |
+| `GET /api/config`, `PUT /api/config` | Ajustes (el token nunca se devuelve). En `PUT`, `token` ausente o `null` conserva el guardado y `""` lo quita. |
+| `POST /api/config/root`, `POST /api/config/token` | Valida una carpeta, o verifica un token con TMDB. |
 | `GET /api/explore?decada=&anio=&director=&genero=&pais=&idioma=&coleccion=&resolucion=&subs=&ubicacion=&estado=&orden=&dir=` | Ítems de Explorar que cumplen las facetas, y los valores de cada faceta con su conteo. |
 | `GET /api/movies/{tmdbId}` | Ficha de una película: datos, versiones y extras. |
 | `GET /api/movies?q=&near=` | Películas del catálogo para "es un extra de…". |
@@ -290,7 +313,9 @@ internal/tmdb         cliente de TMDB
 internal/wikidata     cliente de Wikidata (SPARQL)
 internal/images       caché de imágenes
 internal/identify     puntaje, búsqueda, enriquecimiento y el proceso en segundo plano
-internal/catalog      ítems, facetas, fichas y duplicados de la interfaz
+internal/engine       lo que depende de config.json (TMDB, escaneo, identificación), reemplazable en caliente
+internal/catalog      ítems, facetas, fichas, duplicados y filas del Inicio
+internal/search       índice de búsqueda (FTS5 en memoria)
 internal/server       API JSON y la interfaz embebida (internal/server/dist)
 internal/platform     abrir archivos y carpetas con el sistema
 web/                  la interfaz (Svelte 5 + Vite)
@@ -301,16 +326,16 @@ El diseño y los planes de cada etapa están en `docs/superpowers/specs/` y
 
 ## Problemas frecuentes
 
-- **"Falta tmdbToken en config.json" / "El token de TMDB no es válido":**
-  revisá que sea el *API Read Access Token* (v4), no la API Key corta.
+- **"Falta el token de TMDB" / "Token de TMDB inválido":** cargalo o
+  cambialo en Ajustes; tiene que ser el *API Read Access Token* (v4), no la
+  API Key corta.
 - **"Sin conexión: se reintenta más tarde":** TMDB o Wikidata no respondieron.
   La app reintenta sola; mientras tanto, todo lo demás funciona.
 - **Una película mal identificada o sin identificar:** en Revisar → Sin
   identificar, confirmá el candidato correcto o buscala a mano por título o por
   IMDb id (`tt0071129`). Una identificación equivocada se corrige desde el menú
   ⋯ de la versión, en la ficha de la película.
-- **Archivos que no aparecen:** revisá `roots` en `config.json`; las rutas son
-  relativas a la carpeta de la app.
+- **Archivos que no aparecen:** revisá las carpetas en Ajustes.
 - **"Modo consulta (solo lectura)":** la carpeta de la app no se puede
   escribir. Ver [Modo consulta](#modo-consulta).
 
