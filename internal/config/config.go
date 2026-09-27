@@ -116,6 +116,7 @@ func Root(appDir, input string) (string, error) {
 	if !st.IsDir() {
 		return "", fmt.Errorf("%s no es una carpeta", input)
 	}
+	abs = canonicalCase(abs)
 	rel, err := appdir.Rel(appDir, abs)
 	if err != nil {
 		// Another drive on Windows: the catalog only keeps relative paths.
@@ -131,6 +132,49 @@ func Root(appDir, input string) (string, error) {
 		return "", errors.New("esa carpeta está dentro de la de la app")
 	}
 	return rel, nil
+}
+
+// canonicalCase rewrites abs component by component to match the real
+// on-disk name, so a case-variant spelling ("cine" vs "Cine") always
+// resolves to the same catalog path on case-insensitive filesystems
+// (Windows, macOS). On case-sensitive filesystems this is a no-op, since
+// the exact name always matches.
+func canonicalCase(abs string) string {
+	vol := filepath.VolumeName(abs)
+	rest := strings.TrimPrefix(abs[len(vol):], string(filepath.Separator))
+	if rest == "" {
+		return abs
+	}
+	cur := vol + string(filepath.Separator)
+	for _, part := range strings.Split(rest, string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, canonicalName(cur, part))
+	}
+	return cur
+}
+
+// canonicalName returns the entry in dir whose name matches name, preferring
+// an exact match and falling back to a case-insensitive one. If dir can't be
+// read or no entry matches (shouldn't happen; the caller already Stat'd the
+// full path), name is returned unchanged.
+func canonicalName(dir, name string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return name
+	}
+	for _, e := range entries {
+		if e.Name() == name {
+			return name
+		}
+	}
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), name) {
+			return e.Name()
+		}
+	}
+	return name
 }
 
 // onlyParents reports whether rel is "..", "../.." and so on.

@@ -85,6 +85,35 @@ func TestRoot(t *testing.T) {
 	}
 }
 
+// TestRootCanonicalizesCase checks that a case-variant spelling of an
+// existing folder resolves to the on-disk name, so a case-insensitive
+// filesystem (Windows, macOS) never admits the same folder twice under two
+// different spellings. On a case-sensitive filesystem (Linux) the lowercase
+// spelling of "Cine" doesn't exist, so there's nothing to canonicalize.
+func TestRootCanonicalizesCase(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "cinexplorer")
+	if err := os.MkdirAll(filepath.Join(root, "Cine", "1970s"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	lower := filepath.Join(root, "cine")
+	if _, err := os.Stat(lower); err != nil {
+		t.Skip("case-sensitive filesystem: no case-insensitive match to canonicalize")
+	}
+
+	if got, err := Root(appDir, lower); err != nil || got != "../Cine" {
+		t.Fatalf("Root(%q) = %q, %v; want ../Cine", lower, got, err)
+	}
+	nested := filepath.Join(root, "cine", "1970S")
+	if got, err := Root(appDir, nested); err != nil || got != "../Cine/1970s" {
+		t.Fatalf("Root(%q) = %q, %v; want ../Cine/1970s", nested, got, err)
+	}
+}
+
 func TestCheckRoots(t *testing.T) {
 	appDir, _ := disk(t)
 	ok := [][]string{
