@@ -4,7 +4,7 @@ Copiá y pegá esto como primer mensaje:
 
 ---
 
-Estoy retomando el proyecto **Cinexplorer** (repo: https://github.com/martjanz/cinexplorer). Las etapas 1 a 4a están en `main`. La Etapa 4b (Descubrimiento y primer uso: Inicio estilo MUBI, búsqueda instantánea con FTS5, asistente de primer uso, Ajustes e idioma es-AR) ya tiene spec y plan. Esta sesión es para **implementarla**.
+Estoy retomando el proyecto **Cinexplorer** (repo: https://github.com/martjanz/cinexplorer). Las etapas 1 a 4a están en `main`. La Etapa 4b (Descubrimiento y primer uso: Inicio estilo MUBI, búsqueda instantánea con FTS5, asistente de primer uso, Ajustes e idioma es-AR) ya tiene spec y plan, en la rama `claude/adoring-curie-njeqf9` (si todavía no está mergeada a `main`, partí de esa rama). Esta sesión es para **implementarla**.
 
 Leé antes de arrancar:
 - `docs/superpowers/specs/2026-09-27-cinexplorer-m4b-descubrimiento-design.md` — spec de la 4b.
