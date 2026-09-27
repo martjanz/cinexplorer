@@ -1,4 +1,5 @@
 <script>
+  import Busqueda from './Busqueda.svelte'
   import Estado from './Estado.svelte'
 
   let { page } = $props()
@@ -7,10 +8,11 @@
 <header>
   <nav>
     <a class="brand" href="/">Cinexplorer</a>
-    <a href="/" class:active={page === 'inicio'}>Inicio</a>
+    <a class="home" href="/" class:active={page === 'inicio'}>Inicio</a>
     <a href="/explorar" class:active={page === 'explorar'}>Explorar</a>
     <a href="/revisar" class:active={page === 'revisar'}>Revisar</a>
     <span class="spacer"></span>
+    <Busqueda />
     <Estado />
   </nav>
 </header>
@@ -50,8 +52,11 @@
   }
   @media (max-width: 640px) {
     nav {
-      gap: 14px;
+      gap: 12px;
       letter-spacing: 0.04em;
+    }
+    .home {
+      display: none; /* the brand leads home */
     }
   }
 </style>

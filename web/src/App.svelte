@@ -3,6 +3,7 @@
   import { app, watchStatus } from './lib/app.svelte.js'
   import { navigate, route } from './lib/nav.svelte.js'
   import { appLink, resolve } from './lib/router.js'
+  import Buscar from './pages/Buscar.svelte'
   import Explorar from './pages/Explorar.svelte'
   import Inicio from './pages/Inicio.svelte'
   import Pelicula from './pages/Pelicula.svelte'
@@ -32,6 +33,8 @@
     <Inicio />
   {:else if current.page === 'explorar'}
     <Explorar />
+  {:else if current.page === 'buscar'}
+    <Buscar />
   {:else if current.page === 'pelicula'}
     {#key current.id}
       <Pelicula id={current.id} />

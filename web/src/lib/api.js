@@ -33,6 +33,7 @@ const post = (path, body) => call('POST', path, body ?? {})
 export const api = {
   status: () => get('/api/status'),
   home: (seed) => get(`/api/home?seed=${seed}`),
+  find: (q, limit = 8) => get(`/api/search?${new URLSearchParams({ q, limit })}`),
   explore: (search) => get(`/api/explore${search}`),
   movie: (id) => get(`/api/movies/${id}`),
   version: (key) => get(`/api/versions/${encodeURIComponent(key)}`),
