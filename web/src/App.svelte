@@ -3,6 +3,8 @@
   import { app, watchStatus } from './lib/app.svelte.js'
   import { navigate, route } from './lib/nav.svelte.js'
   import { appLink, resolve } from './lib/router.js'
+  import Ajustes from './pages/Ajustes.svelte'
+  import Bienvenida from './pages/Bienvenida.svelte'
   import Buscar from './pages/Buscar.svelte'
   import Explorar from './pages/Explorar.svelte'
   import Inicio from './pages/Inicio.svelte'
@@ -11,6 +13,11 @@
   import Version from './pages/Version.svelte'
 
   const current = $derived(resolve(route.path))
+
+  // Until the first-use settings are saved, every page is the assistant.
+  $effect(() => {
+    if (app.status?.setupPending && current.page !== 'bienvenida') navigate('/bienvenida', { replace: true })
+  })
 
   watchStatus()
 
@@ -26,7 +33,9 @@
 
 <svelte:window {onclick} />
 
-<Nav page={current.page} />
+{#if current.page !== 'bienvenida'}
+  <Nav page={current.page} />
+{/if}
 
 <main>
   {#if current.page === 'inicio'}
@@ -35,6 +44,10 @@
     <Explorar />
   {:else if current.page === 'buscar'}
     <Buscar />
+  {:else if current.page === 'ajustes'}
+    <Ajustes />
+  {:else if current.page === 'bienvenida'}
+    <Bienvenida />
   {:else if current.page === 'pelicula'}
     {#key current.id}
       <Pelicula id={current.id} />

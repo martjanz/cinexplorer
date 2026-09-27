@@ -29,6 +29,7 @@ async function call(method, path, body) {
 
 const get = (path) => call('GET', path)
 const post = (path, body) => call('POST', path, body ?? {})
+const put = (path, body) => call('PUT', path, body)
 
 export const api = {
   status: () => get('/api/status'),
@@ -45,6 +46,10 @@ export const api = {
   open: (path) => post('/api/open', { path }),
   reveal: (path) => post('/api/reveal', { path }),
   scan: () => post('/api/scan'),
+  config: () => get('/api/config'),
+  saveConfig: (body) => put('/api/config', body),
+  checkRoot: (path) => post('/api/config/root', { path }),
+  checkToken: (token) => post('/api/config/token', { token }),
 }
 
 // Image URLs. A stored movie's image carries its version (the name of the

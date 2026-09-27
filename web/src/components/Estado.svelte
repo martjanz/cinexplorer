@@ -61,6 +61,7 @@
         {#if !st.readOnly}
           <button onclick={rescan} disabled={st.scan?.running}>Volver a escanear</button>
         {/if}
+        <a class="to-settings" href="/ajustes" onclick={() => (open = false)}>Ajustes →</a>
       </div>
     {/if}
   </div>
@@ -100,6 +101,11 @@
     50% {
       opacity: 0.3;
     }
+  }
+  .to-settings {
+    margin-left: 12px;
+    font-size: 13px;
+    color: var(--accent);
   }
   .panel {
     position: absolute;

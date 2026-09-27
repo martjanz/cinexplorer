@@ -88,7 +88,7 @@
   {:else if scanning}
     <p class="empty">Escaneando… Las películas van a aparecer a medida que se encuentren.</p>
   {:else}
-    <p class="empty">El catálogo está vacío. Revisá las raíces en config.json y volvé a escanear.</p>
+    <p class="empty">El catálogo está vacío. Revisá las carpetas en <a href="/ajustes">Ajustes</a>.</p>
   {/if}
 {/if}
 

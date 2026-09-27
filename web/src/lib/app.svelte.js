@@ -16,6 +16,13 @@ let wasBusy = false
 let lastProgress = ''
 let lastRefresh = Date.now() // pages load their data when they open
 
+// settingsSaved updates what the pages know right after saving the
+// settings (the first-use assistant is done) and asks for the new status.
+export function settingsSaved() {
+  if (app.status) app.status = { ...app.status, setupPending: false }
+  poll()
+}
+
 async function poll() {
   clearTimeout(timer)
   try {

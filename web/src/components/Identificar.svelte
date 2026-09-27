@@ -2,7 +2,7 @@
   import { api } from '../lib/api.js'
   import { app, notify, refreshStatus } from '../lib/app.svelte.js'
   import { keyAction } from '../lib/keys.js'
-  import { tmdbProblem } from '../lib/status.js'
+  import { tmdbProblem, tokenProblem } from '../lib/status.js'
   import Candidatos from './Candidatos.svelte'
   import SelectorExtra from './SelectorExtra.svelte'
 
@@ -85,7 +85,7 @@
 
 <div class="identificar">
   {#if problem}
-    <p class="problem">{problem}</p>
+    <p class="problem">{problem} {#if tokenProblem(app.status)}<a href="/ajustes">Ir a Ajustes</a>{/if}</p>
   {/if}
   {#if candidates.length}
     <Candidatos list={candidates} numbered={active} disabled={busy || !!problem} onpick={(c) => act('movie', c.tmdbId)} />
@@ -137,6 +137,9 @@
   .problem {
     margin: 0;
     color: var(--warn);
+  }
+  .problem a {
+    color: var(--accent);
   }
   .none {
     margin: 0;
