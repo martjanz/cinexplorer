@@ -161,7 +161,8 @@ func (it *Item) values(facet string) []string {
 
 func (it *Item) matches(facets map[string]string, except string) bool {
 	for f, want := range facets {
-		if f == except {
+		// The decade's menu also ignores the year: choosing a decade drops it.
+		if f == except || (except == "decada" && f == "anio") {
 			continue
 		}
 		found := false

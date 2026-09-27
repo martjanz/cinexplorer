@@ -14,7 +14,7 @@ export const app = $state({
 let timer
 let wasBusy = false
 let lastProgress = ''
-let lastRefresh = 0
+let lastRefresh = Date.now() // pages load their data when they open
 
 async function poll() {
   clearTimeout(timer)

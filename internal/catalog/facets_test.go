@@ -92,6 +92,11 @@ func TestCounts(t *testing.T) {
 		t.Errorf("genero %v, want %v", got, want)
 	}
 
+	// The decade menu ignores the chosen year: choosing a decade drops it.
+	if got, want := Counts(items, map[string]string{"decada": "1970", "anio": "1976"})["decada"], []FacetValue{{"1970", "1970s", 5}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("decada with a year %v, want %v", got, want)
+	}
+
 	all := Counts(items, map[string]string{})
 	if got, want := all["decada"], []FacetValue{{"1970", "1970s", 5}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("decada %v, want %v", got, want)
