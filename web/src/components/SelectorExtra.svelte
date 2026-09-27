@@ -9,12 +9,17 @@
   let q = $state('')
   let list = $state([])
   let timer
+  let loads = 0
 
+  // Only the latest request fills the list: an earlier, slower one would
+  // show movies that no longer match what was typed.
   async function load() {
+    const id = ++loads
     try {
-      list = await api.suggest(q, near)
+      const found = await api.suggest(q, near)
+      if (id === loads) list = found
     } catch (e) {
-      notify(e.message)
+      if (id === loads) notify(e.message)
     }
   }
 
