@@ -196,6 +196,9 @@ func (s *Scanner) run(ctx context.Context) error {
 	if err := s.Store.SyncFiles(seen, clean); err != nil {
 		return err
 	}
+	if err := s.Store.MarkOutsideRoots(s.Roots); err != nil {
+		return err
+	}
 	versions := grouping.Build(entries, attempted)
 	if err := s.Store.ReplaceVersions(versions); err != nil {
 		return err

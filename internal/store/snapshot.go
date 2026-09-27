@@ -6,6 +6,10 @@ type Snapshot struct {
 	Versions        []VersionView              // as Versions returns them
 	Identifications map[string]*Identification // by fingerprint
 	Movies          map[int]Movie              // by TMDB id
+	// Changes counts the rows written through the catalog's connection
+	// since it was opened: it differs between two snapshots when the
+	// catalog changed in between (it restarts if the connection does).
+	Changes int64
 }
 
 // read runs f inside a transaction, so that everything f reads comes from
@@ -25,6 +29,9 @@ func (s *Store) read(f func(tx querier) error) error {
 func (s *Store) Snapshot() (Snapshot, error) {
 	snap := Snapshot{Identifications: map[string]*Identification{}, Movies: map[int]Movie{}}
 	err := s.read(func(tx querier) error {
+		if err := tx.QueryRow(`SELECT total_changes()`).Scan(&snap.Changes); err != nil {
+			return err
+		}
 		vs, err := s.versions(tx)
 		if err != nil {
 			return err

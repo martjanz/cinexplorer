@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -231,6 +232,46 @@ func (s *Store) SyncFiles(seen []FileRow, scannedRoots []string) error {
 			return err
 		}
 		if !present[p] && underAny(p, scannedRoots) {
+			gone = append(gone, p)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, p := range gone {
+		if _, err := tx.Exec(`UPDATE files SET missing = 1 WHERE path = ?`, p); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// MarkOutsideRoots marks as missing the present files that are not under any
+// of roots (the configured ones, available or not): what a removed root
+// leaves behind. They come back if the root is added again.
+func (s *Store) MarkOutsideRoots(roots []string) error {
+	clean := make([]string, len(roots))
+	for i, r := range roots {
+		clean[i] = path.Clean(r)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT path FROM files WHERE missing = 0`)
+	if err != nil {
+		return err
+	}
+	var gone []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return err
+		}
+		if !underAny(p, clean) {
 			gone = append(gone, p)
 		}
 	}

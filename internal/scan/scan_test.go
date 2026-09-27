@@ -323,3 +323,24 @@ func TestScanCallsOnDone(t *testing.T) {
 		t.Fatalf("OnDone called %d times", calls)
 	}
 }
+
+func TestScanMarksRemovedRootMissing(t *testing.T) {
+	disk, app, st := setup(t)
+	writeFile(t, filepath.Join(disk, "cine", "Amarcord.1973.mkv"), 4096, 'a')
+	writeFile(t, filepath.Join(disk, "cine-ordenar", "Attenberg.2010.avi"), 4096, 'b')
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine", "../cine-ordenar"}, Store: st}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sc.Roots = []string{"../cine"}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := st.FileIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx["../cine/Amarcord.1973.mkv"].Missing || !idx["../cine-ordenar/Attenberg.2010.avi"].Missing {
+		t.Fatalf("index %+v", idx)
+	}
+}

@@ -130,6 +130,7 @@ func stem(p string) string {
 
 type querier interface {
 	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // identifications loads every identification row by fingerprint.
