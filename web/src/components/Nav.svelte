@@ -6,7 +6,8 @@
 
 <header>
   <nav>
-    <a class="brand" href="/explorar">Cinexplorer</a>
+    <a class="brand" href="/">Cinexplorer</a>
+    <a href="/" class:active={page === 'inicio'}>Inicio</a>
     <a href="/explorar" class:active={page === 'explorar'}>Explorar</a>
     <a href="/revisar" class:active={page === 'revisar'}>Revisar</a>
     <span class="spacer"></span>

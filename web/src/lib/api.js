@@ -32,6 +32,7 @@ const post = (path, body) => call('POST', path, body ?? {})
 
 export const api = {
   status: () => get('/api/status'),
+  home: (seed) => get(`/api/home?seed=${seed}`),
   explore: (search) => get(`/api/explore${search}`),
   movie: (id) => get(`/api/movies/${id}`),
   version: (key) => get(`/api/versions/${encodeURIComponent(key)}`),

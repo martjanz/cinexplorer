@@ -4,15 +4,12 @@
   import { navigate, route } from './lib/nav.svelte.js'
   import { appLink, resolve } from './lib/router.js'
   import Explorar from './pages/Explorar.svelte'
+  import Inicio from './pages/Inicio.svelte'
   import Pelicula from './pages/Pelicula.svelte'
   import Revisar from './pages/Revisar.svelte'
   import Version from './pages/Version.svelte'
 
   const current = $derived(resolve(route.path))
-
-  $effect(() => {
-    if (current.page === 'redirect') navigate(current.to, { replace: true })
-  })
 
   watchStatus()
 
@@ -31,7 +28,9 @@
 <Nav page={current.page} />
 
 <main>
-  {#if current.page === 'explorar'}
+  {#if current.page === 'inicio'}
+    <Inicio />
+  {:else if current.page === 'explorar'}
     <Explorar />
   {:else if current.page === 'pelicula'}
     {#key current.id}
