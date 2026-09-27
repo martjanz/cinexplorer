@@ -13,8 +13,8 @@ import (
 )
 
 // TestSmoke runs the app as a first start would: an app directory next to a
-// movie folder, no config.json and no TMDB token; then the settings are
-// saved as proposed.
+// movie folder, no config.json and no TMDB token. The first-use settings are
+// saved as proposed, and the movie shows up.
 func TestSmoke(t *testing.T) {
 	disk := t.TempDir()
 	appDir := filepath.Join(disk, "cinexplorer")
@@ -33,20 +33,50 @@ func TestSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeStore()
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	call := func(method, path, body string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	get := func(path string) (int, string) { t.Helper(); return call("GET", path, "") }
+
 	// First start: nothing saved or scanned until the settings are.
-	time.Sleep(50 * time.Millisecond)
-	if !srv.Engine.SetupPending() || !srv.Engine.Current().Scanner.Status().Finished.IsZero() {
-		t.Fatal("scanned before the first-use settings")
+	if code, body := get("/api/status"); code != 200 || !strings.Contains(body, `"setupPending":true`) {
+		t.Fatalf("status %d %s", code, body)
+	}
+	code, body := get("/api/config")
+	var cfg struct {
+		Roots []struct {
+			Path string `json:"path"`
+		} `json:"roots"`
+		Language string `json:"language"`
+	}
+	if err := json.Unmarshal([]byte(body), &cfg); err != nil || code != 200 || len(cfg.Roots) != 1 ||
+		cfg.Roots[0].Path != "../cine" || cfg.Language != "es-AR" {
+		t.Fatalf("config %d %s (%v)", code, body, err)
 	}
 	if _, err := os.Stat(filepath.Join(appDir, "config.json")); err == nil {
 		t.Fatal("config.json written before the first-use settings")
 	}
-	cfg := srv.Engine.Current().Config
-	if len(cfg.Roots) != 1 || cfg.Roots[0] != "../cine" || cfg.Language != "es-AR" {
-		t.Fatalf("proposed %+v", cfg)
+	if code, body := call("PUT", "/api/config", `{"roots":["../cine"],"language":"es-AR"}`); code != 200 {
+		t.Fatalf("put %d %s", code, body)
 	}
-	if err := srv.Engine.Apply(cfg); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join(appDir, "config.json")); err != nil {
+		t.Fatalf("config.json: %v", err)
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for st := srv.Engine.Current().Scanner.Status(); st.Running || st.Finished.IsZero(); st = srv.Engine.Current().Scanner.Status() {
@@ -55,28 +85,13 @@ func TestSmoke(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if _, err := os.Stat(filepath.Join(appDir, "config.json")); err != nil {
-		t.Fatalf("config.json: %v", err)
-	}
 
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-	get := func(path string) (int, string) {
-		t.Helper()
-		res, err := http.Get(ts.URL + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer res.Body.Close()
-		b, _ := io.ReadAll(res.Body)
-		return res.StatusCode, string(b)
-	}
-	for _, p := range []string{"/", "/explorar?decada=1970"} {
+	for _, p := range []string{"/", "/explorar?decada=1970", "/buscar?q=amarcord", "/bienvenida", "/ajustes"} {
 		if code, body := get(p); code != 200 || !strings.Contains(strings.ToLower(body), "<!doctype html>") {
 			t.Errorf("%s: %d %.200s", p, code, body)
 		}
 	}
-	code, body := get("/api/explore?decada=1970")
+	code, body = get("/api/explore?decada=1970")
 	var explore struct {
 		Total int `json:"total"`
 		Items []struct {
@@ -88,7 +103,11 @@ func TestSmoke(t *testing.T) {
 		explore.Items[0].Title != "Amarcord" || explore.Items[0].Year != 1973 {
 		t.Fatalf("explore %d %s (%v)", code, body, err)
 	}
-	if code, body := get("/api/status"); code != 200 || !strings.Contains(body, `"state":"noToken"`) {
+	if code, body := get("/api/search?q=amarc"); code != 200 || !strings.Contains(body, `"total":1`) {
+		t.Errorf("search %d %s", code, body)
+	}
+	if code, body := get("/api/status"); code != 200 || !strings.Contains(body, `"state":"noToken"`) ||
+		!strings.Contains(body, `"setupPending":false`) {
 		t.Errorf("status %d %s", code, body)
 	}
 }
