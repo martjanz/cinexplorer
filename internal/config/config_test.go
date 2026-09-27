@@ -23,7 +23,7 @@ func TestLoadDefaultsToSiblingDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"../cine", "../cine-ordenar"}
-	if !created || !reflect.DeepEqual(cfg.Roots, want) || cfg.Language != "es-ES" {
+	if !created || !reflect.DeepEqual(cfg.Roots, want) || cfg.Language != "es-AR" {
 		t.Fatalf("got created=%v cfg=%+v", created, cfg)
 	}
 }
@@ -45,5 +45,75 @@ func TestLoadRejectsBrokenJSON(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, FileName), []byte("{roots:"), 0o644)
 	if _, _, err := Load(dir); err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+// disk makes <tmp>/cinexplorer (the app dir) next to cine/1970s, and a file.
+func disk(t *testing.T) (appDir, root string) {
+	t.Helper()
+	root = t.TempDir()
+	appDir = filepath.Join(root, "cinexplorer")
+	for _, d := range []string{appDir, filepath.Join(root, "cine", "1970s"), filepath.Join(appDir, "cache")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return appDir, root
+}
+
+func TestRoot(t *testing.T) {
+	appDir, root := disk(t)
+	for _, tc := range []struct{ in, want string }{
+		{"../cine", "../cine"},
+		{"../cine/", "../cine"},
+		{"./../cine/1970s", "../cine/1970s"},
+		{filepath.Join(root, "cine"), "../cine"},
+		{"  ../cine  ", "../cine"},
+	} {
+		got, err := Root(appDir, tc.in)
+		if err != nil || got != tc.want {
+			t.Errorf("Root(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+		}
+	}
+	for _, in := range []string{"", "../nada", "../notes.txt", ".", appDir, "..", root, "cache", filepath.Join(appDir, "cache")} {
+		if got, err := Root(appDir, in); err == nil {
+			t.Errorf("Root(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
+func TestCheckRoots(t *testing.T) {
+	appDir, _ := disk(t)
+	ok := [][]string{
+		{"../cine"},
+		{"../cine", "../gone"}, // saved, unplugged
+	}
+	for _, roots := range ok {
+		if err := CheckRoots(appDir, roots, []string{"../gone"}); err != nil {
+			t.Errorf("%v: %v", roots, err)
+		}
+	}
+	bad := [][]string{
+		nil,
+		{"../gone"},                  // new and missing
+		{"../cine/"},                 // not in catalog form
+		{"../cine", "../cine"},       // repeated
+		{"../cine", "../cine/1970s"}, // nested
+		{"../cine/1970s", "../cine"}, // nested, the other way
+	}
+	for _, roots := range bad {
+		if err := CheckRoots(appDir, roots, nil); err == nil {
+			t.Errorf("%v: want an error", roots)
+		}
+	}
+}
+
+func TestAvailable(t *testing.T) {
+	appDir, _ := disk(t)
+	if !Available(appDir, "../cine") || Available(appDir, "../nada") || Available(appDir, "../notes.txt") {
+		t.Fatal("Available")
 	}
 }
