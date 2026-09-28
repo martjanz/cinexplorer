@@ -47,7 +47,8 @@ func TestHomePage(t *testing.T) {
 		kinds = append(kinds, r.Kind)
 		rows[r.Kind] = r
 	}
-	if want := []string{RowRecent, RowDecade, RowDirector, RowCountry, RowGenre, RowCollection}; !slices.Equal(kinds, want) {
+	slices.Sort(kinds) // the order is shuffled: TestHomePageOrder
+	if want := []string{RowCollection, RowCountry, RowDecade, RowDirector, RowGenre, RowRandom, RowRecent}; !slices.Equal(kinds, want) {
 		t.Fatalf("rows %v", kinds)
 	}
 	recent := rows[RowRecent]
@@ -70,6 +71,14 @@ func TestHomePage(t *testing.T) {
 	if g := rows[RowGenre]; g.Value != "Drama" || g.Href != "/explorar?genero=Drama" || len(g.Items) != 14 {
 		t.Fatalf("genre %+v", g)
 	}
+	rnd := rows[RowRandom]
+	ids := map[int]bool{}
+	for _, it := range rnd.Items {
+		ids[it.TMDBID] = true
+	}
+	if rnd.Value != "" || rnd.Href != "/explorar" || len(rnd.Items) != 14 || len(ids) != 14 {
+		t.Fatalf("random %+v", rnd)
+	}
 	if c := rows[RowCollection]; c.Value != "5" || c.Label != "Saga" || c.Href != "/explorar?coleccion=5" ||
 		len(c.Items) != 2 || c.Items[0].Year != 1973 {
 		t.Fatalf("collection %+v", c)
@@ -91,19 +100,46 @@ func TestHomePageSeed(t *testing.T) {
 	t.Fatal("every seed gave the same rows")
 }
 
+func kindsOf(h Home) []string {
+	var kinds []string
+	for _, r := range h.Rows {
+		kinds = append(kinds, r.Kind)
+	}
+	return kinds
+}
+
+func TestHomePageOrder(t *testing.T) {
+	snap := homeSnapshot()
+	first := kindsOf(HomePage(snap, 0))
+	firsts := map[string]bool{}
+	other := false
+	for seed := uint64(0); seed < 40; seed++ {
+		kinds := kindsOf(HomePage(snap, seed))
+		other = other || !slices.Equal(kinds, first)
+		firsts[kinds[0]] = true
+	}
+	if !other || !firsts[RowRecent] || len(firsts) < 3 {
+		t.Fatalf("the order hardly changes: first rows %v", firsts)
+	}
+}
+
 func TestHomePageMinimums(t *testing.T) {
 	snap := homeSnapshot()
 	for id := 106; id < 114; id++ { // keep 6 movies: 1970–1975
 		delete(snap.Movies, id)
 	}
 	h := HomePage(snap, 1)
-	var kinds []string
-	for _, r := range h.Rows {
-		kinds = append(kinds, r.Kind)
-	}
+	kinds := kindsOf(h)
+	slices.Sort(kinds)
 	// 6 by director 1 (≥3); 3 per country (<6); 1 in the collection (<2).
-	if want := []string{RowRecent, RowDecade, RowDirector, RowGenre}; !slices.Equal(kinds, want) || h.Total != 6 {
+	if want := []string{RowDecade, RowDirector, RowGenre, RowRandom, RowRecent}; !slices.Equal(kinds, want) || h.Total != 6 {
 		t.Fatalf("rows %v total %d", kinds, h.Total)
+	}
+	for id := 105; id < 106; id++ { // 5 movies: too few to draw at random
+		delete(snap.Movies, id)
+	}
+	if kinds := kindsOf(HomePage(snap, 1)); slices.Contains(kinds, RowRandom) {
+		t.Fatalf("rows %v", kinds)
 	}
 	if h := HomePage(store.Snapshot{}, 1); h.Total != 0 || h.Rows == nil || len(h.Rows) != 0 {
 		t.Fatalf("empty: %+v", h)

@@ -6,6 +6,8 @@ export function rowTitle(row) {
   switch (row.kind) {
     case 'recent':
       return 'Agregadas recientemente'
+    case 'random':
+      return 'Aleatorias'
     case 'decade': {
       const y = Number(row.value)
       return y >= 1920 && y <= 1990 ? `Los ${String(y).slice(2)}` : `Los ${y}`

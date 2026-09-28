@@ -4,6 +4,7 @@ import { homeSeed, rowTitle, saveSeed, tileWidth } from './home.js'
 describe('rowTitle', () => {
   it.each([
     [{ kind: 'recent' }, 'Agregadas recientemente'],
+    [{ kind: 'random' }, 'Aleatorias'],
     [{ kind: 'decade', value: '1970', label: '1970s' }, 'Los 70'],
     [{ kind: 'decade', value: '1920', label: '1920s' }, 'Los 20'],
     [{ kind: 'decade', value: '2000', label: '2000s' }, 'Los 2000'],

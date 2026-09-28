@@ -75,9 +75,27 @@ export function changed(config, d) {
   )
 }
 
-// rescans reports whether saving the draft makes the server scan again:
-// on first use, and for any change but the card size, which only the pages
-// use.
-export function rescans(config, d) {
-  return config.setupPending || changed(config, { ...d, tileSize: config.tileSize })
+// savedNotice is what saving the draft makes the server do, said after
+// saving: on first use it scans every folder; a change of folders scans
+// only the added ones (what the removed ones leave is hidden); any other
+// change but the card size, which only the pages use, runs the
+// identification again without scanning.
+export function savedNotice(config, d) {
+  const saved = config.roots.map((r) => r.path)
+  const roots = body(d).roots
+  const added = roots.filter((r) => !saved.includes(r))
+  switch (true) {
+    case config.setupPending:
+      return 'Ajustes guardados. Se escanean las carpetas.'
+    case added.length > 0:
+      return added.length === 1
+        ? 'Ajustes guardados. Se escanea la carpeta nueva.'
+        : 'Ajustes guardados. Se escanean las carpetas nuevas.'
+    case roots.length !== saved.length:
+      return 'Ajustes guardados. Se quitan las películas de las carpetas quitadas.'
+    case changed(config, { ...d, tileSize: config.tileSize }):
+      return 'Ajustes guardados. Se actualizan los datos de las películas.'
+    default:
+      return 'Ajustes guardados.'
+  }
 }

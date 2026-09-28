@@ -253,3 +253,81 @@ func TestStopCancelsScan(t *testing.T) {
 		t.Fatal("still scanning after Stop")
 	}
 }
+
+// TestUpdateWithoutRootChangesDoesNotScan checks that a change of language,
+// token or images runs the identification again but scans nothing.
+func TestUpdateWithoutRootChangesDoesNotScan(t *testing.T) {
+	e := newEngine(t, false)
+	e.Start(config.Config{Roots: []string{"../cine"}, Language: "es-AR"}, false)
+	waitScan(t, e)
+	for _, cfg := range []config.Config{
+		{Roots: []string{"../cine"}, Language: "en-US"},
+		{Roots: []string{"../cine"}, Language: "en-US", ImagePrefetch: "all"},
+	} {
+		if err := e.Apply(cfg); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(50 * time.Millisecond) // time for a scan it should not start
+		rt := e.Current()
+		if st := rt.Scanner.Status(); st.Running || !st.Finished.IsZero() || rt.Identifier.Language != cfg.Language {
+			t.Fatalf("scan %+v, runtime %+v", st, rt)
+		}
+	}
+}
+
+// TestUpdateScansAddedRoots checks that adding a root scans only it, and
+// removing one only marks what it leaves.
+func TestUpdateScansAddedRoots(t *testing.T) {
+	e := newEngine(t, false)
+	e.Start(config.Config{Roots: []string{"../cine"}}, false)
+	waitScan(t, e)
+	// Not seen: ../cine is not scanned again.
+	p := filepath.Join(filepath.Dir(e.AppDir), "cine", "Nostalghia (1983)", "Nostalghia.1983.mkv")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("nostalghia"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Apply(config.Config{Roots: []string{"../cine", "../otro"}}); err != nil {
+		t.Fatal(err)
+	}
+	waitScan(t, e)
+	if got, st := titles(t, e), e.Current().Scanner.Status(); !reflect.DeepEqual(got, []string{"Amarcord", "Stalker"}) || st.Files != 1 {
+		t.Fatalf("titles %v, scan %+v", got, st)
+	}
+	if err := e.Apply(config.Config{Roots: []string{"../otro"}}); err != nil {
+		t.Fatal(err)
+	}
+	waitScan(t, e)
+	if got := titles(t, e); !reflect.DeepEqual(got, []string{"Stalker"}) {
+		t.Fatalf("titles %v", got)
+	}
+	if idx, _ := e.Store.FileIndex(); !idx["../cine/Amarcord.1973.mkv"].Missing {
+		t.Fatalf("index %+v", idx)
+	}
+}
+
+// TestUpdateFinishesInterruptedScan checks that a scan cut short by a
+// change is done again by the next runtime, even if the roots are the same.
+func TestUpdateFinishesInterruptedScan(t *testing.T) {
+	e := newEngine(t, false)
+	e.Start(config.Config{Roots: []string{"../cine"}}, true)
+	rt := e.Current()
+	started := make(chan struct{})
+	rt.Scanner.Probe = func(ctx context.Context, path string) (probe.Info, error) {
+		close(started)
+		<-ctx.Done()
+		return probe.Info{}, ctx.Err()
+	}
+	e.pending.Store(false) // as if started with a config.json, but with the probe above
+	rt.Scan()
+	<-started
+	if err := e.Apply(config.Config{Roots: []string{"../cine"}, Language: "en-US"}); err != nil {
+		t.Fatal(err)
+	}
+	waitScan(t, e)
+	if got := e.Current().Scanner.Status(); got.Files != 1 {
+		t.Fatalf("scan %+v", got)
+	}
+}

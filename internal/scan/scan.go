@@ -57,8 +57,17 @@ func (s *Scanner) Status() Status {
 	return s.status
 }
 
-// Run performs one incremental scan. A call while another is running returns ErrBusy.
+// Run performs one incremental scan of every root. A call while another is
+// running returns ErrBusy.
 func (s *Scanner) Run(ctx context.Context) error {
+	return s.RunRoots(ctx, s.Roots)
+}
+
+// RunRoots is Run over only some of the roots (the ones just added): the
+// catalog of the others stays as it is, except that what lies outside every
+// root (a removed one) is marked missing as always. With no roots it only
+// does that.
+func (s *Scanner) RunRoots(ctx context.Context, roots []string) error {
 	s.mu.Lock()
 	if s.status.Running {
 		s.mu.Unlock()
@@ -67,7 +76,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 	s.status = Status{Running: true}
 	s.mu.Unlock()
 
-	err := s.run(ctx)
+	err := s.run(ctx, roots)
 
 	s.mu.Lock()
 	s.status.Running = false
@@ -82,7 +91,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 	return err
 }
 
-func (s *Scanner) run(ctx context.Context) error {
+func (s *Scanner) run(ctx context.Context, roots []string) error {
 	known, err := s.Store.FileIndex()
 	if err != nil {
 		return err
@@ -97,7 +106,7 @@ func (s *Scanner) run(ctx context.Context) error {
 	var attempted []string
 	var clean []string
 
-	for _, root := range s.Roots {
+	for _, root := range roots {
 		abs := appdir.Abs(s.AppDir, root)
 		if st, err := os.Stat(abs); err != nil || !st.IsDir() {
 			log.Printf("raíz no disponible, se omite: %s", root)
@@ -199,12 +208,12 @@ func (s *Scanner) run(ctx context.Context) error {
 	if err := s.Store.MarkOutsideRoots(s.Roots); err != nil {
 		return err
 	}
-	versions := grouping.Build(entries, attempted)
-	if err := s.Store.ReplaceVersions(versions); err != nil {
+	n, err := s.Store.ReplaceVersionsIn(grouping.Build(entries, attempted), roots, s.Roots)
+	if err != nil {
 		return err
 	}
 	s.mu.Lock()
-	s.status.Versions = len(versions)
+	s.status.Versions = n
 	s.mu.Unlock()
 	// The catalog is already updated here: an error from the probe phase only
 	// means some files keep their previous (or no) technical data.

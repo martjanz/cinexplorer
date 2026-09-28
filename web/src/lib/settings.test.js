@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addRoot, body, changed, draft, languageName, rescans } from './settings.js'
+import { addRoot, body, changed, draft, languageName, savedNotice } from './settings.js'
 
 const config = {
   setupPending: false,
@@ -39,10 +39,18 @@ describe('settings', () => {
     expect(changed(config, { ...draft(config), language: 'en-US' })).toBe(true)
     expect(changed(config, { ...draft(config), tileSize: 'large' })).toBe(true)
   })
-  it('scans again for anything but the card size', () => {
+  it('says what saving makes the server do', () => {
     const d = draft(config)
-    expect(rescans(config, { ...d, tileSize: 'large' })).toBe(false)
-    expect(rescans(config, { ...d, tileSize: 'large', language: 'en-US' })).toBe(true)
-    expect(rescans({ ...config, setupPending: true }, { ...draft(config), tileSize: 'large' })).toBe(true)
+    expect(savedNotice(config, { ...d, tileSize: 'large' })).toBe('Ajustes guardados.')
+    expect(savedNotice(config, { ...d, tileSize: 'large', language: 'en-US' })).toMatch(/actualizan los datos/)
+    expect(savedNotice(config, { ...d, imagePrefetch: 'all' })).toMatch(/actualizan los datos/)
+    expect(savedNotice({ ...config, setupPending: true }, { ...d, tileSize: 'large' })).toMatch(/escanean las carpetas\./)
+    const more = addRoot(d, { path: '../otras', available: true })
+    expect(savedNotice(config, more)).toMatch(/la carpeta nueva/)
+    expect(savedNotice(config, addRoot(more, { path: '../cine-ordenar', available: true }))).toMatch(/las carpetas nuevas/)
+    const none = { ...d, roots: d.roots.map((r) => ({ ...r, checked: false })) }
+    expect(savedNotice(config, none)).toMatch(/quitan las películas/)
+    // Swapping a folder for another scans the new one.
+    expect(savedNotice(config, addRoot(none, { path: '../otras', available: true }))).toMatch(/la carpeta nueva/)
   })
 })

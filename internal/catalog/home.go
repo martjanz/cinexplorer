@@ -14,6 +14,7 @@ import (
 // Row kinds of the home page.
 const (
 	RowRecent     = "recent"
+	RowRandom     = "random"
 	RowDecade     = "decade"
 	RowDirector   = "director"
 	RowCountry    = "country"
@@ -58,8 +59,9 @@ type group struct {
 }
 
 // HomePage builds the home rows from the identified movies: the ones added
-// last, then a random decade, director, country, genre and TMDB collection
-// with enough movies. The same seed gives the same rows.
+// last, some drawn at random, and a random decade, director, country, genre
+// and TMDB collection with enough movies, in a random order. The same seed
+// gives the same rows.
 func HomePage(snap store.Snapshot, seed uint64) Home {
 	var movies []*entry
 	for _, e := range build(snap, nil) {
@@ -78,6 +80,12 @@ func HomePage(snap store.Snapshot, seed uint64) Home {
 		return cmp.Or(-cmp.Compare(a.item.Added, b.item.Added), cmp.Compare(a.item.norm, b.item.norm))
 	})
 	home.Rows = append(home.Rows, row(snap, RowRecent, group{movies: recent}, "/explorar?orden=agregado"))
+
+	if len(movies) >= 6 {
+		random := slices.Clone(movies)
+		rng.Shuffle(len(random), func(i, j int) { random[i], random[j] = random[j], random[i] })
+		home.Rows = append(home.Rows, row(snap, RowRandom, group{movies: random}, "/explorar"))
+	}
 
 	add := func(kind, facet string, min int, byYear bool, values func(*entry) (vals, labels []string)) {
 		groups := map[string]*group{}
@@ -139,6 +147,7 @@ func HomePage(snap store.Snapshot, seed uint64) Home {
 		}
 		return []string{strconv.Itoa(e.item.collectionID)}, []string{e.item.collection}
 	})
+	rng.Shuffle(len(home.Rows), func(i, j int) { home.Rows[i], home.Rows[j] = home.Rows[j], home.Rows[i] })
 	return home
 }
 

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
 	"cinexplorer/internal/appdir"
@@ -342,5 +343,44 @@ func TestScanMarksRemovedRootMissing(t *testing.T) {
 	}
 	if idx["../cine/Amarcord.1973.mkv"].Missing || !idx["../cine-ordenar/Attenberg.2010.avi"].Missing {
 		t.Fatalf("index %+v", idx)
+	}
+}
+
+func TestRunRootsOnlyWalksThose(t *testing.T) {
+	disk, app, st := setup(t)
+	writeFile(t, filepath.Join(disk, "cine", "Amarcord.1973.mkv"), 4096, 'a')
+	writeFile(t, filepath.Join(disk, "cine-ordenar", "Attenberg.2010.avi"), 4096, 'b')
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine"}, Store: st}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// A file added to ../cine is not seen by a run over the new root only.
+	writeFile(t, filepath.Join(disk, "cine", "Stalker.1979.mkv"), 4096, 'c')
+	sc.Roots = []string{"../cine", "../cine-ordenar"}
+	if err := sc.RunRoots(context.Background(), []string{"../cine-ordenar"}); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := st.Versions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, v := range vs {
+		got = append(got, v.Title)
+	}
+	if !slices.Equal(got, []string{"Amarcord", "Attenberg"}) || sc.Status().Versions != 2 {
+		t.Fatalf("versions %v, status %+v", got, sc.Status())
+	}
+	// Removing a root walks nothing and leaves its files missing, its
+	// versions gone.
+	sc.Roots = []string{"../cine-ordenar"}
+	if err := sc.RunRoots(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	idx, _ := st.FileIndex()
+	vs, _ = st.Versions()
+	if !idx["../cine/Amarcord.1973.mkv"].Missing || idx["../cine-ordenar/Attenberg.2010.avi"].Missing ||
+		len(vs) != 1 || vs[0].Title != "Attenberg" {
+		t.Fatalf("index %+v versions %+v", idx, vs)
 	}
 }

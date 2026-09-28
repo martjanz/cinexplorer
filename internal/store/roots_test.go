@@ -1,6 +1,13 @@
 package store
 
-import "testing"
+import (
+	"path"
+	"slices"
+	"testing"
+
+	"cinexplorer/internal/grouping"
+	"cinexplorer/internal/nameparse"
+)
 
 func TestMarkOutsideRoots(t *testing.T) {
 	s := open(t)
@@ -52,5 +59,44 @@ func TestSnapshotChanges(t *testing.T) {
 	}
 	if n, err := s.Changes(); err != nil || n != c.Changes {
 		t.Fatalf("Changes() = %d, %v; snapshot %d", n, err, c.Changes)
+	}
+}
+
+func TestReplaceVersionsIn(t *testing.T) {
+	s := open(t)
+	version := func(title, p string) grouping.Version {
+		return grouping.Version{Dir: path.Dir(p), Parsed: nameparse.Parsed{Title: title}, Size: 10, Parts: 1,
+			Members: []grouping.Member{{Path: p, Role: grouping.RoleMain}}}
+	}
+	all := []string{"../cine", "../cine-ordenar", "../otro"}
+	if err := s.SyncFiles([]FileRow{
+		{Path: "../cine/a/a.mkv", Size: 10, MTime: 1, Fingerprint: "fa", Kind: "video"},
+		{Path: "../cine-ordenar/b.mkv", Size: 10, MTime: 1, Fingerprint: "fb", Kind: "video"},
+		{Path: "../otro/c.mkv", Size: 10, MTime: 1, Fingerprint: "fc", Kind: "video"},
+		{Path: "../cine-ordenar/d.mkv", Size: 10, MTime: 1, Fingerprint: "fd", Kind: "video"},
+	}, all); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceVersions([]grouping.Version{version("A", "../cine/a/a.mkv"),
+		version("B", "../cine-ordenar/b.mkv"), version("C", "../otro/c.mkv")}); err != nil {
+		t.Fatal(err)
+	}
+	// ../cine-ordenar is walked again (b.mkv gone, d.mkv new) and ../otro
+	// was removed: ../cine keeps its version.
+	n, err := s.ReplaceVersionsIn([]grouping.Version{version("D", "../cine-ordenar/d.mkv")},
+		[]string{"../cine-ordenar"}, []string{"../cine", "../cine-ordenar"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs, err := s.Versions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, v := range vs {
+		got = append(got, v.Title+":"+v.Files[0].Path)
+	}
+	if want := []string{"A:../cine/a/a.mkv", "D:../cine-ordenar/d.mkv"}; n != 2 || !slices.Equal(got, want) {
+		t.Fatalf("n=%d versions %v, want %v", n, got, want)
 	}
 }

@@ -4,7 +4,7 @@
   import Token from '../components/Token.svelte'
   import { api } from '../lib/api.js'
   import { notify, settingsSaved } from '../lib/app.svelte.js'
-  import { body, changed, draft, prefetchModes, rescans, tileSizes } from '../lib/settings.js'
+  import { body, changed, draft, prefetchModes, savedNotice, tileSizes } from '../lib/settings.js'
 
   let config = $state(null)
   let d = $state(null)
@@ -26,13 +26,13 @@
 
   async function save() {
     saving = true
-    const scans = rescans(config, d)
+    const notice = savedNotice(config, d)
     try {
       config = await api.saveConfig(body(d))
       d = draft(config)
       version++
       settingsSaved()
-      notify(scans ? 'Ajustes guardados. Se vuelve a escanear.' : 'Ajustes guardados.')
+      notify(notice)
     } catch (e) {
       notify(e.message)
     }

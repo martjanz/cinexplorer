@@ -309,6 +309,64 @@ func (s *Store) ReplaceVersions(vs []grouping.Version) error {
 	if _, err := tx.Exec(`DELETE FROM versions`); err != nil {
 		return err
 	}
+	if err := insertVersions(tx, vs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ReplaceVersionsIn replaces only part of the versions table with vs: the
+// versions with a file under roots (the ones just walked) and those with no
+// file under any of configured (what a removed root leaves behind). The
+// versions of the other roots stay as they are. It returns how many
+// versions there are now.
+func (s *Store) ReplaceVersionsIn(vs []grouping.Version, roots, configured []string) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	// A version goes if any of its files says so, or if it has none.
+	rows, err := tx.Query(`SELECT v.id, f.path FROM versions v LEFT JOIN files f ON f.version_id = v.id`)
+	if err != nil {
+		return 0, err
+	}
+	drop := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		var p sql.NullString
+		if err := rows.Scan(&id, &p); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if !p.Valid || underAny(p.String, roots) || !underAny(p.String, configured) {
+			drop[id] = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for id := range drop {
+		if _, err := tx.Exec(`UPDATE files SET version_id = NULL, role = '', part = 0, lang = '' WHERE version_id = ?`, id); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`DELETE FROM versions WHERE id = ?`, id); err != nil {
+			return 0, err
+		}
+	}
+	if err := insertVersions(tx, vs); err != nil {
+		return 0, err
+	}
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM versions`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
+}
+
+// insertVersions adds vs and links their files.
+func insertVersions(tx *sql.Tx, vs []grouping.Version) error {
 	insV, err := tx.Prepare(`INSERT INTO versions (dir, title, year, director, countries, resolution, source, codec,
 		language, release_group, imdb_id, size, parts, sub_langs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
@@ -346,7 +404,7 @@ func (s *Store) ReplaceVersions(vs []grouping.Version) error {
 			}
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // Versions returns every version with its files, technical data and
