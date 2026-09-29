@@ -19,17 +19,18 @@ func (s *Server) snapshot(w http.ResponseWriter) (store.Snapshot, bool) {
 }
 
 // explore answers Explorar: the items that match the facets in the query,
-// sorted, plus every facet's values counted over the other facets.
+// sorted, plus every facet's values counted over the other facets, and the
+// list applied, if any.
 func (s *Server) explore(w http.ResponseWriter, r *http.Request) {
 	snap, ok := s.snapshot(w)
 	if !ok {
 		return
 	}
-	q := catalog.ParseQuery(r.URL.Query())
+	q, list := catalog.ApplyLists(catalog.ParseQuery(r.URL.Query()), snap)
 	all := catalog.Items(snap, s.rt().Config.Roots)
 	items := catalog.Filter(all, q.Facets)
-	catalog.Sort(items, q.Order, q.Dir)
-	writeJSON(w, map[string]any{"total": len(items), "query": q, "items": items, "facets": catalog.Counts(all, q.Facets)})
+	catalog.SortQuery(items, q)
+	writeJSON(w, map[string]any{"total": len(items), "query": q, "items": items, "facets": catalog.Counts(all, q.Facets), "list": list})
 }
 
 // home answers the home page: rows of movies, drawn with the page's seed.

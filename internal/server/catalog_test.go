@@ -50,6 +50,7 @@ type exploreBody struct {
 	Query  catalog.Query                   `json:"query"`
 	Items  []catalog.Item                  `json:"items"`
 	Facets map[string][]catalog.FacetValue `json:"facets"`
+	List   *catalog.ListRef                `json:"list"`
 }
 
 func TestExploreEndpoint(t *testing.T) {
