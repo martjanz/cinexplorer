@@ -57,9 +57,21 @@ var folds = strings.NewReplacer(
 	"ř", "r", "ś", "s", "š", "s", "ş", "s", "ť", "t", "ź", "z", "ż", "z", "ž", "z",
 )
 
+// dropMarks removes combining marks: macOS volumes often store file names
+// decomposed ("a" + U+0301), which would otherwise split a word in two.
+func dropMarks(r rune) rune {
+	if unicode.Is(unicode.Mn, r) {
+		return -1
+	}
+	return r
+}
+
 // StripAccents removes accents from s, keeping case, spaces and punctuation.
 func StripAccents(s string) string {
 	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Mn, r) {
+			return -1
+		}
 		if unicode.IsUpper(r) {
 			if f := []rune(folds.Replace(string(unicode.ToLower(r)))); len(f) == 1 {
 				return unicode.ToUpper(f[0])
@@ -76,7 +88,7 @@ func StripAccents(s string) string {
 // Words folds s to lowercase ASCII-ish words: accents removed, split on
 // anything that is not a letter or digit.
 func Words(s string) []string {
-	s = folds.Replace(strings.ToLower(s))
+	s = folds.Replace(strings.Map(dropMarks, strings.ToLower(s)))
 	return strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 }
 

@@ -88,9 +88,16 @@ func TestStripAccents(t *testing.T) {
 		"Ni olvido ni perdón": "Ni olvido ni perdon",
 		"ÁRBOL Ñandú: café":   "ARBOL Nandu: cafe",
 		"Plain":               "Plain",
+		"Tropica\u0301lia":    "Tropicalia", // decomposed, as macOS stores it
 	} {
 		if got := StripAccents(in); got != want {
 			t.Errorf("StripAccents(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestNormTitleDecomposed(t *testing.T) {
+	if got := NormTitle("Tropica\u0301lia"); got != "tropicalia" {
+		t.Errorf("NormTitle = %q", got)
 	}
 }

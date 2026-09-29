@@ -17,8 +17,9 @@ import (
 // MatcherVersion changes whenever the matching algorithm or its thresholds
 // change, so earlier automatic results are recomputed. 2: the language is
 // part of the stored query; unavailable credits no longer fail a search.
-// 3: search queries are sent without accents.
-const MatcherVersion = 3
+// 3: search queries are sent without accents. 4: also decomposed accents
+// (macOS file names).
+const MatcherVersion = 4
 
 // A version is assigned automatically when its best candidate scores at
 // least AutoThreshold and beats the runner-up by at least AutoMargin.
