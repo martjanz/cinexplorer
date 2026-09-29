@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -206,6 +207,70 @@ func TestUnlink(t *testing.T) {
 		if v.PartLinked {
 			t.Fatalf("%q still marked linked", v.Title)
 		}
+	}
+}
+
+func TestApplyPartLinksWithIdenticalCopiesNeverDuplicatesAPart(t *testing.T) {
+	s, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	const (
+		la = "../cine/L/L.mkv"
+		fa = "../cine/F/F.mkv"
+		lb = "../cine2/L/L.mkv"
+		fb = "../cine2/F/F.mkv"
+	)
+	if err := s.SyncFiles([]FileRow{
+		{Path: la, Size: 100, MTime: 1, Fingerprint: "l", Kind: "video"},
+		{Path: fa, Size: 90, MTime: 1, Fingerprint: "f", Kind: "video"},
+		{Path: lb, Size: 100, MTime: 1, Fingerprint: "l", Kind: "video"},
+		{Path: fb, Size: 90, MTime: 1, Fingerprint: "f", Kind: "video"},
+	}, []string{"../cine", "../cine2"}); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(dir, title, p string, size int64) grouping.Version {
+		return grouping.Version{Dir: dir, Parsed: nameparse.Parsed{Title: title}, Size: size, Parts: 1,
+			Members: []grouping.Member{{Path: p, Role: grouping.RoleMain}}}
+	}
+	if err := s.ReplaceVersions([]grouping.Version{
+		mk("../cine/L", "L", la, 100), mk("../cine/F", "F", fa, 90),
+		mk("../cine2/L", "L", lb, 100), mk("../cine2/F", "F", fb, 90),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPartLink("f", "l"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplyPartLinks(); err != nil { // an unrelated, later apply
+		t.Fatal(err)
+	}
+	rows, err := s.db.Query(`SELECT version_id, part, fingerprint FROM files WHERE version_id IS NOT NULL AND role = 'main'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	parts, fps := map[[2]int64]bool{}, map[string]bool{}
+	for rows.Next() {
+		var vid, part int64
+		var fp string
+		if err := rows.Scan(&vid, &part, &fp); err != nil {
+			t.Fatal(err)
+		}
+		if k := [2]int64{vid, part}; parts[k] {
+			t.Fatalf("version %d has part %d twice", vid, part)
+		} else {
+			parts[k] = true
+		}
+		if k := fmt.Sprintf("%d|%s", vid, fp); fps[k] {
+			t.Fatalf("version %d has two main files with fingerprint %s", vid, fp)
+		} else {
+			fps[k] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 }
 

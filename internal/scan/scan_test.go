@@ -385,6 +385,52 @@ func TestRunRootsOnlyWalksThose(t *testing.T) {
 	}
 }
 
+func linkedAcrossRoots(t *testing.T) (*Scanner, *store.Store) {
+	t.Helper()
+	disk, app, st := setup(t)
+	writeFile(t, filepath.Join(disk, "a", "Film A", "a.mkv"), 4096, 'a')
+	writeFile(t, filepath.Join(disk, "b", "Film B", "b.mkv"), 4096, 'b')
+	sc := &Scanner{AppDir: app, Roots: []string{"../a", "../b"}, Store: st}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := st.Versions()
+	if err != nil || len(vs) != 2 {
+		t.Fatalf("versions %+v, err %v", vs, err)
+	}
+	fp := map[string]string{}
+	for _, v := range vs {
+		fp[v.Title] = v.Fingerprint
+	}
+	if err := st.SetPartLink(fp["b"], fp["a"]); err != nil {
+		t.Fatal(err)
+	}
+	return sc, st
+}
+
+func TestPartialScanKeepsLinkedVersionAcrossRoots(t *testing.T) {
+	sc, st := linkedAcrossRoots(t)
+	if err := sc.RunRoots(context.Background(), []string{"../b"}); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := st.Versions()
+	if err != nil || len(vs) != 1 || vs[0].Parts != 2 {
+		t.Fatalf("after partial scan: %+v, err %v", vs, err)
+	}
+}
+
+func TestRemovingLinkedFollowerRootKeepsLeader(t *testing.T) {
+	sc, st := linkedAcrossRoots(t)
+	sc.Roots = []string{"../a"}
+	if err := sc.RunRoots(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := st.Versions()
+	if err != nil || len(vs) != 1 || vs[0].Title != "a" {
+		t.Fatalf("after removing ../b: %+v, err %v", vs, err)
+	}
+}
+
 func TestScanKeepsPartLinks(t *testing.T) {
 	disk, app, st := setup(t)
 	writeFile(t, filepath.Join(disk, "cine", "Film A", "a.mkv"), 4096, 'a')

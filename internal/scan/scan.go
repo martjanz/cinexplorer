@@ -66,7 +66,8 @@ func (s *Scanner) Run(ctx context.Context) error {
 // RunRoots is Run over only some of the roots (the ones just added): the
 // catalog of the others stays as it is, except that what lies outside every
 // root (a removed one) is marked missing as always. With no roots it only
-// does that.
+// does that. While part links exist the walk is widened to every configured
+// root, because a linked version spans roots and would otherwise lose files.
 func (s *Scanner) RunRoots(ctx context.Context, roots []string) error {
 	s.mu.Lock()
 	if s.status.Running {
@@ -92,6 +93,13 @@ func (s *Scanner) RunRoots(ctx context.Context, roots []string) error {
 }
 
 func (s *Scanner) run(ctx context.Context, roots []string) error {
+	// A merged version spans roots, and versions are replaced whole, so with
+	// part links a partial walk would drop a leader's files: walk everything.
+	if linked, err := s.Store.HasPartLinks(); err != nil {
+		return err
+	} else if linked {
+		roots = s.Roots
+	}
 	known, err := s.Store.FileIndex()
 	if err != nil {
 		return err

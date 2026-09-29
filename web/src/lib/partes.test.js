@@ -21,6 +21,12 @@ describe('matchVersions', () => {
     expect(matchVersions(list, 'shoah', 'a').map((x) => x.fingerprint)).toEqual(['b'])
     expect(matchVersions(list, 'sin', 'zz')).toEqual([])
   })
+  it('keeps identical copies (same fingerprint, different id) as separate entries', () => {
+    const copies = [v('x', 'Copia', { id: 1, dir: '../cine/a' }), v('x', 'Copia', { id: 2, dir: '../cine-ordenar/b' })]
+    const got = matchVersions(copies, 'copia', 'zz')
+    expect(got.map((e) => e.id)).toEqual([1, 2])
+    expect(new Set(got.map((e) => e.fingerprint)).size).toBe(1)
+  })
   it('caps the list', () => {
     const many = Array.from({ length: 30 }, (_, i) => v(`f${i}`, `Parte ${i}`))
     expect(matchVersions(many, 'parte', 'zz', 5)).toHaveLength(5)

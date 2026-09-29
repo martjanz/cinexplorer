@@ -9,7 +9,19 @@ import (
 )
 
 // ErrPartLink is returned for a link that makes no sense.
-var ErrPartLink = errors.New("una película no puede ser parte de sí misma")
+var ErrPartLink = errors.New("vínculo de partes inválido: una película no puede ser parte de sí misma ni formar un ciclo")
+
+// HasPartLinks reports whether any part link is stored.
+func (s *Store) HasPartLinks() (bool, error) {
+	if !s.hasPartLinks {
+		return false, nil
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM part_links`).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
 
 type execQuerier interface {
 	querier
@@ -181,6 +193,19 @@ func (s *Store) ApplyPartLinks() (int, error) {
 		for _, f := range fs {
 			fid, ok := byFP[f]
 			if !ok || fid == lid {
+				continue
+			}
+			// Identical copies of a follower share its fingerprint but byFP
+			// only sees one of them: if the leader already holds this
+			// follower's file (merged earlier), another copy must not add
+			// the same part again. Such copies stay separate versions
+			// (known limitation).
+			var held int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM files WHERE version_id = ? AND role = 'main' AND fingerprint = ?`,
+				lid, reps[fid].fingerprint).Scan(&held); err != nil {
+				return 0, err
+			}
+			if held > 0 {
 				continue
 			}
 			if !changed {

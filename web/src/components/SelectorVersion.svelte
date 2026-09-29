@@ -24,7 +24,7 @@
   <!-- svelte-ignore a11y_autofocus -->
   <input type="search" placeholder="¿De qué película es parte? (título o carpeta)" bind:value={q} autofocus />
   <ul>
-    {#each list as v (v.fingerprint)}
+    {#each list as v (v.id)}
       <li>
         <button onclick={() => onpick(v)} {disabled}>
           {v.title}
