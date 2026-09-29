@@ -257,9 +257,9 @@ requieren `Content-Type: application/json`.
 | `GET /api/config`, `PUT /api/config` | Ajustes (el token nunca se devuelve). En `PUT`, `token` ausente o `null` conserva el guardado y `""` lo quita. |
 | `POST /api/config/root`, `POST /api/config/token` | Valida una carpeta, o verifica un token con TMDB. |
 | `GET /api/explore?decada=&anio=&director=&genero=&pais=&idioma=&coleccion=&lista=&resolucion=&subs=&ubicacion=&estado=&orden=&dir=` | Ítems de Explorar que cumplen las facetas, y los valores de cada faceta con su conteo. |
-| `GET /api/movies/{tmdbId}` | Ficha de una película: datos, versiones y extras. |
+| `GET /api/movies/{tmdbId}` | Ficha de una película: datos, versiones y extras, y las listas que la tienen (`lists`). |
 | `GET /api/movies?q=&near=` | Películas del catálogo para "es un extra de…". |
-| `GET /api/versions/{huella}` | Ficha de una versión que no es (todavía) una película del catálogo. |
+| `GET /api/versions/{huella}` | Ficha de una versión que no es (todavía) una película del catálogo, con sus `lists`. |
 | `GET /api/versions` | Todas las versiones con archivos, datos técnicos, identificación y película. |
 | `GET /api/unidentified` | Cola de sin identificar, con candidatos, y cuántas esperan identificación. |
 | `GET /api/duplicates` | Copias idénticas y varias versiones, con el espacio recuperable. |

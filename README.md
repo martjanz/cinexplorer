@@ -238,9 +238,9 @@ Spanish (`decada` = decade, `anio` = year, `pais` = country, `orden` = sort…).
 | `GET /api/config`, `PUT /api/config` | Settings (the token is never returned). On `PUT`, a missing or `null` `token` keeps the saved one and `""` clears it. |
 | `POST /api/config/root`, `POST /api/config/token` | Validate a folder, or verify a token with TMDB. |
 | `GET /api/explore?decada=&anio=&director=&genero=&pais=&idioma=&coleccion=&lista=&resolucion=&subs=&ubicacion=&estado=&orden=&dir=` | Explore items matching the facets, plus each facet's values with counts. |
-| `GET /api/movies/{tmdbId}` | A movie's page: data, versions and extras. |
+| `GET /api/movies/{tmdbId}` | A movie's page: data, versions and extras, and the lists that hold it (`lists`). |
 | `GET /api/movies?q=&near=` | Catalog movies for "extra of…". |
-| `GET /api/versions/{fingerprint}` | Page for a version that isn't (yet) a catalog movie. |
+| `GET /api/versions/{fingerprint}` | Page for a version that isn't (yet) a catalog movie, with its `lists`. |
 | `GET /api/versions` | All versions with files, technical data, identification and movie. |
 | `GET /api/unidentified` | Unidentified queue with candidates, and how many are awaiting identification. |
 | `GET /api/duplicates` | Identical copies and multiple versions, with reclaimable space. |
