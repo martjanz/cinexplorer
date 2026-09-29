@@ -9,6 +9,8 @@ export function resolve(pathname) {
   if (pathname === '/bienvenida') return { page: 'bienvenida' }
   if (pathname === '/revisar') return { page: 'revisar', tab: 'sin-identificar' }
   if (pathname === '/revisar/duplicados') return { page: 'revisar', tab: 'duplicados' }
+  if (pathname === '/revisar/colecciones') return { page: 'revisar', tab: 'colecciones' }
+  if (pathname === '/listas') return { page: 'listas' }
   let m = pathname.match(/^\/pelicula\/([1-9][0-9]*)$/)
   if (m) return { page: 'pelicula', id: Number(m[1]) }
   m = pathname.match(/^\/version\/([^/]+)$/)

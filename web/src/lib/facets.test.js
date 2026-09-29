@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chips, parse, toSearch, valueLabel, withFacet, withOrder } from './facets.js'
+import { chips, ordersFor, parse, toSearch, valueLabel, withFacet, withOrder } from './facets.js'
 
 describe('parse and toSearch', () => {
   it('reads facets and order', () => {
@@ -65,5 +65,27 @@ describe('labels', () => {
       { name: 'decada', value: '1970', label: '1970s' },
       { name: 'director', value: '4415', label: 'Federico Fellini' },
     ])
+  })
+})
+
+describe('lists', () => {
+  it('sorts a list by date added to it by default', () => {
+    expect(parse('?lista=7')).toEqual({ facets: { lista: '7' }, order: 'agregado-lista', dir: 'desc' })
+    expect(toSearch(parse('?lista=7'))).toBe('?lista=7')
+    expect(parse('?lista=7&orden=anio')).toEqual({ facets: { lista: '7' }, order: 'anio', dir: 'desc' })
+    expect(toSearch(parse('?lista=7&orden=anio'))).toBe('?lista=7&orden=anio')
+    expect(parse('?orden=agregado-lista')).toEqual({ facets: {}, order: 'anio', dir: 'desc' })
+  })
+  it('resets the order when the list changes', () => {
+    expect(withFacet(parse('?lista=7&orden=titulo'), 'lista', null)).toEqual({ facets: {}, order: 'anio', dir: 'desc' })
+    expect(withFacet(parse('?decada=1970&orden=titulo'), 'lista', '3')).toEqual({
+      facets: { decada: '1970', lista: '3' },
+      order: 'agregado-lista',
+      dir: 'desc',
+    })
+  })
+  it('offers the list order only with a list', () => {
+    expect(ordersFor(parse('')).map((o) => o.value)).not.toContain('agregado-lista')
+    expect(ordersFor(parse('?lista=7')).map((o) => o.value)).toContain('agregado-lista')
   })
 })

@@ -1,5 +1,7 @@
 // Calls to the Go server. Errors carry the HTTP status and the server's text.
 
+import { itemBody } from './listas.js'
+
 export class ApiError extends Error {
   constructor(status, message) {
     super(message)
@@ -30,6 +32,8 @@ async function call(method, path, body) {
 const get = (path) => call('GET', path)
 const post = (path, body) => call('POST', path, body ?? {})
 const put = (path, body) => call('PUT', path, body)
+const patch = (path, body) => call('PATCH', path, body)
+const del = (path, body) => call('DELETE', path, body ?? {})
 
 export const api = {
   status: () => get('/api/status'),
@@ -53,6 +57,15 @@ export const api = {
   saveConfig: (body) => put('/api/config', body),
   checkRoot: (path) => post('/api/config/root', { path }),
   checkToken: (token) => post('/api/config/token', { token }),
+  lists: () => get('/api/lists'),
+  createList: (name) => post('/api/lists', { name }),
+  renameList: (id, name) => patch(`/api/lists/${id}`, { name }),
+  deleteList: (id) => del(`/api/lists/${id}`),
+  addToList: (id, item) => post(`/api/lists/${id}/entries`, itemBody(item)),
+  removeFromList: (id, item) => del(`/api/lists/${id}/entries`, itemBody(item)),
+  collections: () => get('/api/collections'),
+  importCollection: (body) => post('/api/collections/import', body),
+  dismissCollection: (path) => post('/api/collections/dismiss', { path }),
 }
 
 // Image URLs. A stored movie's image carries its version (the name of the

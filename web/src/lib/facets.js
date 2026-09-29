@@ -10,6 +10,7 @@ export const FACETS = [
   { name: 'pais', label: 'País' },
   { name: 'resolucion', label: 'Resolución' },
   { name: 'subs', label: 'Subtítulos' },
+  { name: 'lista', label: 'Lista' },
   { name: 'idioma', label: 'Idioma original', more: true },
   { name: 'coleccion', label: 'Colección', more: true },
   { name: 'ubicacion', label: 'Ubicación', more: true },
@@ -23,6 +24,7 @@ export const ORDERS = [
   { value: 'titulo', label: 'Título' },
   { value: 'agregado', label: 'Agregado' },
   { value: 'tamano', label: 'Tamaño' },
+  { value: 'agregado-lista', label: 'Agregado a la lista', list: true },
 ]
 
 export const STATES = {
@@ -37,6 +39,18 @@ export function defaultDir(order) {
   return order === 'titulo' ? 'asc' : 'desc'
 }
 
+// defaultOrder is the order a query gets when none is chosen: by date added
+// to the list when there is one, by year otherwise.
+export function defaultOrder(facets) {
+  return facets.lista ? 'agregado-lista' : 'anio'
+}
+
+// ordersFor lists the orders a query can use: the list's own only with a
+// list.
+export function ordersFor(query) {
+  return ORDERS.filter((o) => !o.list || query.facets.lista)
+}
+
 // parse reads a query string ("?decada=1970&orden=titulo"). Unknown
 // parameters are dropped; the server validates the values.
 export function parse(search) {
@@ -46,8 +60,9 @@ export function parse(search) {
     const v = params.get(name)
     if (v) facets[name] = v
   }
-  const order = ORDERS.some((o) => o.value === params.get('orden')) ? params.get('orden') : 'anio'
-  const dir = ['asc', 'desc'].includes(params.get('dir')) ? params.get('dir') : defaultDir(order)
+  const asked = ORDERS.find((o) => o.value === params.get('orden') && (!o.list || facets.lista))
+  const order = asked ? asked.value : defaultOrder(facets)
+  const dir = ['asc', 'desc'].includes(params.get('dir')) ? params.get('dir') : defaultDir(order || 'anio')
   return { facets, order, dir }
 }
 
@@ -58,8 +73,9 @@ export function toSearch({ facets, order, dir }) {
   for (const name of NAMES) {
     if (facets[name]) params.set(name, facets[name])
   }
-  if (order && order !== 'anio') params.set('orden', order)
-  if (dir && dir !== defaultDir(order || 'anio')) params.set('dir', dir)
+  const natural = defaultOrder(facets)
+  if (order && order !== natural) params.set('orden', order)
+  if (dir && dir !== defaultDir(order || natural)) params.set('dir', dir)
   const s = params.toString()
   return s ? `?${s}` : ''
 }
@@ -75,6 +91,11 @@ export function withFacet(query, name, value) {
   }
   if (name === 'anio' && value && !facets.decada) {
     facets.decada = String(Math.floor(Number(value) / 10) * 10)
+  }
+  // Another list (or none) starts from its natural order.
+  if (name === 'lista') {
+    const order = defaultOrder(facets)
+    return { ...query, facets, order, dir: defaultDir(order) }
   }
   return { ...query, facets }
 }

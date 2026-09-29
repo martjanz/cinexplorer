@@ -13,6 +13,7 @@ describe('rowTitle', () => {
     [{ kind: 'country', value: 'IT', label: 'IT' }, 'Cine de Italia'],
     [{ kind: 'genre', value: 'Drama', label: 'Drama' }, 'Drama'],
     [{ kind: 'collection', value: '10', label: 'El Padrino - Colección' }, 'El Padrino - Colección'],
+    [{ kind: 'list', value: '3', label: 'Por ver' }, 'Por ver'],
   ])('%o', (row, want) => {
     expect(rowTitle(row)).toBe(want)
   })

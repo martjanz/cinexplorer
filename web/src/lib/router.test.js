@@ -10,6 +10,8 @@ describe('resolve', () => {
     ['/bienvenida', { page: 'bienvenida' }],
     ['/revisar', { page: 'revisar', tab: 'sin-identificar' }],
     ['/revisar/duplicados', { page: 'revisar', tab: 'duplicados' }],
+    ['/listas', { page: 'listas' }],
+    ['/revisar/colecciones', { page: 'revisar', tab: 'colecciones' }],
     ['/pelicula/7857', { page: 'pelicula', id: 7857 }],
     ['/version/a1b2', { page: 'version', key: 'a1b2' }],
     ['/version/id%3A9', { page: 'version', key: 'id:9' }],
