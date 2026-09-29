@@ -130,3 +130,60 @@ func TestListCards(t *testing.T) {
 		t.Fatalf("no lists %+v", got)
 	}
 }
+
+func TestListFacet(t *testing.T) {
+	items := Items(withLists(snapshot()), roots)
+	for list, want := range map[string][]string{"1": {"movie:7857", "movie:7858"}, "2": {"p1", "s1"}, "3": {}} {
+		if got := ids(Filter(items, map[string]string{FacetList: list})); !reflect.DeepEqual(got, want) {
+			t.Errorf("lista=%s: %v", list, got)
+		}
+	}
+	want := []FacetValue{{Value: "1", Label: "Fellini", Count: 2}, {Value: "2", Label: "Por ver", Count: 2}}
+	if got := Counts(items, map[string]string{})[FacetList]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("counts %+v", got)
+	}
+}
+
+func TestSortByListAdded(t *testing.T) {
+	items := Items(withLists(snapshot()), roots)
+	order := func(list, dir string) []string {
+		q := Query{Facets: map[string]string{FacetList: list}, Order: OrderListAdded, Dir: dir}
+		got := Filter(items, q.Facets)
+		SortQuery(got, q)
+		out := []string{}
+		for _, it := range got {
+			out = append(out, it.id())
+		}
+		return out
+	}
+	if got := order("1", Desc); !reflect.DeepEqual(got, []string{"movie:7858", "movie:7857"}) {
+		t.Fatalf("fellini %v", got)
+	}
+	if got := order("2", Desc); !reflect.DeepEqual(got, []string{"p1", "s1"}) {
+		t.Fatalf("por ver %v", got)
+	}
+	if got := order("2", Asc); !reflect.DeepEqual(got, []string{"s1", "p1"}) {
+		t.Fatalf("por ver asc %v", got)
+	}
+}
+
+func TestApplyLists(t *testing.T) {
+	snap := withLists(snapshot())
+	q := Query{Facets: map[string]string{FacetList: "2", FacetDecade: "1970"}, Order: OrderListAdded, Dir: Asc}
+	if got, list := ApplyLists(q, snap); !reflect.DeepEqual(got, q) || list == nil || *list != (ListRef{2, "Por ver"}) {
+		t.Fatalf("known list: %+v %+v", got, list)
+	}
+	q.Facets[FacetList] = "9" // deleted
+	got, list := ApplyLists(q, snap)
+	want := Query{Facets: map[string]string{FacetDecade: "1970"}, Order: OrderYear, Dir: Desc}
+	if !reflect.DeepEqual(got, want) || list != nil {
+		t.Fatalf("unknown list: %+v %+v", got, list)
+	}
+	if q.Facets[FacetList] != "9" {
+		t.Fatal("ApplyLists changed the query it got")
+	}
+	plain := Query{Facets: map[string]string{}, Order: OrderTitle, Dir: Asc}
+	if got, list := ApplyLists(plain, snap); !reflect.DeepEqual(got, plain) || list != nil {
+		t.Fatalf("no list: %+v %+v", got, list)
+	}
+}

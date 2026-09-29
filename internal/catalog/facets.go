@@ -17,6 +17,7 @@ const (
 	FacetCountry    = "pais"       // ISO 3166-1 alpha-2
 	FacetLanguage   = "idioma"     // original language, ISO 639-1
 	FacetCollection = "coleccion"  // TMDB collection id
+	FacetList       = "lista"      // a user's list id
 	FacetResolution = "resolucion" // "4K", "1080p", "720p", "SD"
 	FacetSubs       = "subs"       // subtitle language
 	FacetLocation   = "ubicacion"  // "cine" or "cine/1970s"
@@ -25,7 +26,7 @@ const (
 
 // FacetNames lists the facets in the order of Explorar's bar.
 var FacetNames = []string{FacetDecade, FacetYear, FacetDirector, FacetGenre, FacetCountry, FacetLanguage,
-	FacetCollection, FacetResolution, FacetSubs, FacetLocation, FacetState}
+	FacetCollection, FacetList, FacetResolution, FacetSubs, FacetLocation, FacetState}
 
 // Values of FacetState.
 const (
@@ -36,12 +37,13 @@ const (
 
 // Sort orders and directions.
 const (
-	OrderYear  = "anio"
-	OrderTitle = "titulo"
-	OrderAdded = "agregado"
-	OrderSize  = "tamano"
-	Asc        = "asc"
-	Desc       = "desc"
+	OrderYear      = "anio"
+	OrderTitle     = "titulo"
+	OrderAdded     = "agregado"
+	OrderSize      = "tamano"
+	OrderListAdded = "agregado-lista" // only with FacetList
+	Asc            = "asc"
+	Desc           = "desc"
 )
 
 // Query is what Explorar asks for: one value per facet, and an order.
@@ -64,7 +66,7 @@ func valid(facet, value string) bool {
 	case FacetDecade:
 		n, err := strconv.Atoi(value)
 		return err == nil && numberRe.MatchString(value) && n%10 == 0
-	case FacetYear, FacetDirector, FacetCollection:
+	case FacetYear, FacetDirector, FacetCollection, FacetList:
 		return numberRe.MatchString(value)
 	case FacetCountry:
 		return countryRe.MatchString(value)
@@ -82,9 +84,9 @@ func valid(facet, value string) bool {
 }
 
 // ParseQuery reads Explorar's parameters. Unknown parameters and malformed
-// values are dropped; the order defaults to year, newest first, and each
-// order has its natural direction (A to Z for titles, largest or newest
-// first otherwise).
+// values are dropped; the order defaults to year, newest first (date added
+// to the list, with a list), and each order has its natural direction (A to Z
+// for titles, largest or newest first otherwise).
 func ParseQuery(v url.Values) Query {
 	q := Query{Facets: map[string]string{}, Order: OrderYear}
 	for _, f := range FacetNames {
@@ -92,8 +94,12 @@ func ParseQuery(v url.Values) Query {
 			q.Facets[f] = val
 		}
 	}
+	// A list sorts by date added to it unless another order is asked for.
+	if q.Facets[FacetList] != "" {
+		q.Order = OrderListAdded
+	}
 	switch o := v.Get("orden"); o {
-	case OrderTitle, OrderAdded, OrderSize:
+	case OrderYear, OrderTitle, OrderAdded, OrderSize:
 		q.Order = o
 	}
 	q.Dir = Desc
@@ -137,6 +143,12 @@ func (it *Item) values(facet string) []string {
 		if it.collectionID > 0 {
 			return []string{strconv.Itoa(it.collectionID)}
 		}
+	case FacetList:
+		out := make([]string, len(it.lists))
+		for i, l := range it.lists {
+			out[i] = strconv.FormatInt(l.id, 10)
+		}
+		return out
 	case FacetResolution:
 		return it.resolutions
 	case FacetSubs:
@@ -253,6 +265,12 @@ func (it *Item) label(facet, value string) string {
 		}
 	case FacetCollection:
 		return it.collection
+	case FacetList:
+		for _, l := range it.lists {
+			if strconv.FormatInt(l.id, 10) == value {
+				return l.name
+			}
+		}
 	}
 	return value
 }

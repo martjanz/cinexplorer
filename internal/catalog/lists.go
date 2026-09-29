@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"cmp"
+	"maps"
 	"slices"
 	"strconv"
 
@@ -180,4 +181,25 @@ func ListCards(snap store.Snapshot) []ListCard {
 		return cmp.Or(-cmp.Compare(a.UpdatedAt, b.UpdatedAt), cmp.Compare(a.ID, b.ID))
 	})
 	return out
+}
+
+// ApplyLists checks q's lista facet against the lists of snap. A list that
+// no longer exists is dropped like a malformed value, and so is its order.
+// It returns the list applied, nil when none.
+func ApplyLists(q Query, snap store.Snapshot) (Query, *ListRef) {
+	id := q.Facets[FacetList]
+	if id == "" {
+		return q, nil
+	}
+	for _, l := range snap.Lists {
+		if strconv.FormatInt(l.ID, 10) == id {
+			return q, &ListRef{ID: l.ID, Name: l.Name}
+		}
+	}
+	q.Facets = maps.Clone(q.Facets)
+	delete(q.Facets, FacetList)
+	if q.Order == OrderListAdded {
+		q.Order, q.Dir = OrderYear, Desc
+	}
+	return q, nil
 }

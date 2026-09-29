@@ -32,6 +32,8 @@ func Sort(items []Item, order, dir string) {
 			c = cmp.Compare(a.Added, b.Added)
 		case OrderSize:
 			c = cmp.Compare(a.Size, b.Size)
+		case OrderListAdded:
+			c = cmp.Compare(a.listAdded, b.listAdded)
 		default:
 			c = cmp.Compare(a.Year, b.Year)
 		}
@@ -54,4 +56,14 @@ func (it *Item) id() string {
 		return "movie:" + strconv.Itoa(it.TMDBID)
 	}
 	return it.Key
+}
+
+// SortQuery sorts items as q asks, including by date added to q's list.
+func SortQuery(items []Item, q Query) {
+	if q.Order == OrderListAdded {
+		for i := range items {
+			items[i].listAdded, _ = items[i].addedTo(q.Facets[FacetList])
+		}
+	}
+	Sort(items, q.Order, q.Dir)
 }

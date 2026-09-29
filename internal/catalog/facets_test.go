@@ -30,6 +30,12 @@ func TestParseQuery(t *testing.T) {
 		{"director=4415&coleccion=99&idioma=it&subs=spa&ubicacion=cine/1970s&resolucion=4K&genero=Drama&anio=1973",
 			Query{Facets: map[string]string{"director": "4415", "coleccion": "99", "idioma": "it", "subs": "spa",
 				"ubicacion": "cine/1970s", "resolucion": "4K", "genero": "Drama", "anio": "1973"}, Order: OrderYear, Dir: Desc}},
+		// A list sorts by date added to it unless another order is asked for.
+		{"lista=7", Query{Facets: map[string]string{"lista": "7"}, Order: OrderListAdded, Dir: Desc}},
+		{"lista=7&orden=anio", Query{Facets: map[string]string{"lista": "7"}, Order: OrderYear, Dir: Desc}},
+		{"lista=7&orden=titulo", Query{Facets: map[string]string{"lista": "7"}, Order: OrderTitle, Dir: Asc}},
+		{"orden=agregado-lista", Query{Facets: map[string]string{}, Order: OrderYear, Dir: Desc}},
+		{"lista=0&orden=agregado-lista", Query{Facets: map[string]string{}, Order: OrderYear, Dir: Desc}},
 	}
 	for _, c := range cases {
 		v, _ := url.ParseQuery(c.query)
