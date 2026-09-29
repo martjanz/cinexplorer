@@ -384,3 +384,31 @@ func TestRunRootsOnlyWalksThose(t *testing.T) {
 		t.Fatalf("index %+v versions %+v", idx, vs)
 	}
 }
+
+func TestScanKeepsPartLinks(t *testing.T) {
+	disk, app, st := setup(t)
+	writeFile(t, filepath.Join(disk, "cine", "Film A", "a.mkv"), 4096, 'a')
+	writeFile(t, filepath.Join(disk, "cine", "Film B", "b.mkv"), 4096, 'b')
+	sc := &Scanner{AppDir: app, Roots: []string{"../cine"}, Store: st}
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := st.Versions()
+	if err != nil || len(vs) != 2 {
+		t.Fatalf("versions %+v, err %v", vs, err)
+	}
+	if err := st.SetPartLink(vs[1].Fingerprint, vs[0].Fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	// A new scan rebuilds the versions from the files: the link must hold.
+	if err := sc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	vs, err = st.Versions()
+	if err != nil || len(vs) != 1 || vs[0].Parts != 2 || !vs[0].PartLinked {
+		t.Fatalf("after rescan: %+v, err %v", vs, err)
+	}
+	if got := sc.Status().Versions; got != 1 {
+		t.Fatalf("status counts %d versions, want 1", got)
+	}
+}

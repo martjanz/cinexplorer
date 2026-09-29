@@ -212,6 +212,13 @@ func (s *Scanner) run(ctx context.Context, roots []string) error {
 	if err != nil {
 		return err
 	}
+	// What the user linked as parts of one film is merged again: the
+	// grouping above only knows about names.
+	merged, err := s.Store.ApplyPartLinks()
+	if err != nil {
+		return err
+	}
+	n -= merged
 	s.mu.Lock()
 	s.status.Versions = n
 	s.mu.Unlock()
