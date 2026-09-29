@@ -82,3 +82,15 @@ func TestNormTitle(t *testing.T) {
 		t.Errorf("Words = %q", got)
 	}
 }
+
+func TestStripAccents(t *testing.T) {
+	for in, want := range map[string]string{
+		"Ni olvido ni perdón": "Ni olvido ni perdon",
+		"ÁRBOL Ñandú: café":   "ARBOL Nandu: cafe",
+		"Plain":               "Plain",
+	} {
+		if got := StripAccents(in); got != want {
+			t.Errorf("StripAccents(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

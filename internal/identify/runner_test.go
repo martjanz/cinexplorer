@@ -389,7 +389,7 @@ func TestRunFallsBackToFolderName(t *testing.T) {
 	r.Store.SyncFiles([]store.FileRow{{Path: dir + "/cd 01.avi", Size: 700, MTime: 1, Fingerprint: "g1", Kind: "video"}}, []string{"../cine"})
 	r.Store.ReplaceVersions([]grouping.Version{{Dir: dir, Parsed: nameparse.Parsed{Title: "Los Gauchos Judios Rip mentecato"},
 		Size: 700, Parts: 1, Members: []grouping.Member{{Path: dir + "/cd 01.avi", Role: grouping.RoleMain}}}})
-	api.search["Los Gauchos Judíos|1974|es-ES"] = []tmdb.Result{{ID: 537898, Title: "Los gauchos judíos", ReleaseDate: "1975-05-01"}}
+	api.search["Los Gauchos Judios|1974|es-ES"] = []tmdb.Result{{ID: 537898, Title: "Los gauchos judíos", ReleaseDate: "1975-05-01"}}
 	api.movies["537898|es-ES"] = details(537898, "Los gauchos judíos", "1975-05-01", "Entre Ríos.", "Juan José Jusid")
 	if err := r.Run(context.Background()); err != nil {
 		t.Fatal(err)

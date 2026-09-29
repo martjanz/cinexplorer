@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"cinexplorer/internal/quality"
 	"cinexplorer/internal/store"
 	"cinexplorer/internal/tmdb"
 )
@@ -16,7 +17,8 @@ import (
 // MatcherVersion changes whenever the matching algorithm or its thresholds
 // change, so earlier automatic results are recomputed. 2: the language is
 // part of the stored query; unavailable credits no longer fail a search.
-const MatcherVersion = 2
+// 3: search queries are sent without accents.
+const MatcherVersion = 3
 
 // A version is assigned automatically when its best candidate scores at
 // least AutoThreshold and beats the runner-up by at least AutoMargin.
@@ -210,8 +212,10 @@ func titleVariants(title string) []string {
 var bracketRe = regexp.MustCompile(`[(\[]([^()\[\]]*)[)\]]`)
 
 // search looks a title up with its year, then without it if nothing comes
-// back, keeping at most searchLimit results.
+// back, keeping at most searchLimit results. The query is sent without
+// accents: TMDB does not find "Ni olvido ni perdón" by its accented title.
 func search(ctx context.Context, api API, title string, year int, lang string) ([]hit, error) {
+	title = quality.StripAccents(title)
 	rs, err := api.SearchMovie(ctx, title, year, lang)
 	if err != nil {
 		return nil, err

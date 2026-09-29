@@ -57,6 +57,22 @@ var folds = strings.NewReplacer(
 	"ř", "r", "ś", "s", "š", "s", "ş", "s", "ť", "t", "ź", "z", "ż", "z", "ž", "z",
 )
 
+// StripAccents removes accents from s, keeping case, spaces and punctuation.
+func StripAccents(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsUpper(r) {
+			if f := []rune(folds.Replace(string(unicode.ToLower(r)))); len(f) == 1 {
+				return unicode.ToUpper(f[0])
+			}
+			return r
+		}
+		if f := []rune(folds.Replace(string(r))); len(f) == 1 {
+			return f[0]
+		}
+		return r
+	}, s)
+}
+
 // Words folds s to lowercase ASCII-ish words: accents removed, split on
 // anything that is not a letter or digit.
 func Words(s string) []string {
