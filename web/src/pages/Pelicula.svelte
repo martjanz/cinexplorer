@@ -1,4 +1,5 @@
 <script>
+  import ChipsListas from '../components/ChipsListas.svelte'
   import TarjetaVersion from '../components/TarjetaVersion.svelte'
   import { api, backdropURL, posterURL } from '../lib/api.js'
   import { app, notify } from '../lib/app.svelte.js'
@@ -76,6 +77,7 @@
   </section>
 
   <div class="body">
+    <ChipsListas lists={d.lists} item={{ kind: 'movie', tmdbId: m.tmdbId }} onchanged={load} />
     {#if m.overview}<p class="overview">{m.overview}</p>{/if}
     {#if m.cast.length}
       <p class="cast"><span class="label">Reparto</span> {m.cast.map((c) => c.name).join(', ')}</p>

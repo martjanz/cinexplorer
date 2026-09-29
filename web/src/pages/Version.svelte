@@ -1,4 +1,5 @@
 <script>
+  import ChipsListas from '../components/ChipsListas.svelte'
   import Identificar from '../components/Identificar.svelte'
   import TarjetaVersion from '../components/TarjetaVersion.svelte'
   import { api } from '../lib/api.js'
@@ -61,6 +62,9 @@
       {/if}
     </div>
   </section>
+  {#if !key.startsWith('id:')}
+    <ChipsListas lists={d.lists} item={{ kind: 'version', key }} onchanged={load} />
+  {/if}
 
   <div class="versions">
     {#each d.versions as v (v.id)}
