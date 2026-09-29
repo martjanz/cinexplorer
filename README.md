@@ -37,6 +37,9 @@ browser. It doesn't matter how the folders are organized on disk.
 - **Movie page:** TMDB data and, below it, every version on disk with its
   quality, audio and subtitles, **BEST** and **IDENTICAL COPY** badges, and
   ▶ Play / Folder buttons. Each version's ⋯ menu fixes its identification.
+  A film stored in several files (`Part 1`, `CD2`…) is one version; when the
+  names differ after the marker they are grouped too, and ⋯ → *Is a part of…*
+  merges any two versions by hand.
 - **Review** (*Revisar*): the **Unidentified** queue (candidates, manual search, "not a
   movie", "extra of…", with keyboard shortcuts) and **Duplicates** (identical
   copies and multiple versions of a film, with the space you could reclaim).

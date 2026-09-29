@@ -49,7 +49,9 @@ La interfaz tiene estas partes:
 - **Ficha de cada película:** datos de TMDB y, debajo, cada versión en disco
   con su calidad, audio, subtítulos, la marca **MEJOR** y **COPIA IDÉNTICA**,
   y los botones ▶ Ver y Carpeta. El menú ⋯ de cada versión corrige la
-  identificación.
+  identificación. Una película guardada en varios archivos (`Parte 1`, `CD2`…)
+  es una sola versión; cuando los nombres difieren después de la marca también
+  se agrupan, y ⋯ → *Es una parte de…* une dos versiones cualquiera a mano.
 - **Revisar:** la cola de **Sin identificar** (candidatos, búsqueda manual, "no
   es una película", "es un extra de…", con atajos de teclado) y los
   **Duplicados** (copias idénticas y varias versiones de una película, con el

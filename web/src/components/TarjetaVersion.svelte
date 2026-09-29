@@ -3,13 +3,15 @@
   import { app, notify, refreshStatus } from '../lib/app.svelte.js'
   import { languages, mainFile, resolution, subtitles, versionLine } from '../lib/format.js'
   import Identificar from './Identificar.svelte'
+  import SelectorVersion from './SelectorVersion.svelte'
 
   // v: a version card (a version plus `copies`); corrections: show the ⋯
   // menu; onchanged(result): its identification changed.
   let { v, corrections = true, onchanged } = $props()
 
   let menu = $state(false)
-  let panel = $state('') // "search" or "extra": the identification block
+  let panel = $state('') // "search", "extra" or "part"
+  let busy = $state(false)
   let box = $state()
 
   const file = $derived(mainFile(v))
@@ -35,6 +37,20 @@
       onchanged({ action })
     } catch (e) {
       notify(e.message)
+    }
+  }
+
+  async function partOf(leader) {
+    if (busy) return
+    busy = true
+    try {
+      await api.partOf(v.fingerprint, leader.fingerprint)
+      refreshStatus()
+      done({ action: 'part-of' })
+    } catch (e) {
+      notify(e.message)
+    } finally {
+      busy = false
     }
   }
 
@@ -77,6 +93,10 @@
         <div class="menu">
           <button onclick={() => ((panel = 'search'), (menu = false))}>Cambiar película…</button>
           <button onclick={() => ((panel = 'extra'), (menu = false))}>Es un extra de…</button>
+          <button onclick={() => ((panel = 'part'), (menu = false))}>Es una parte de…</button>
+          {#if v.partLinked}
+            <button onclick={() => correct('unlink')}>Separar las partes</button>
+          {/if}
           <button onclick={() => correct('ignore')}>No es una película</button>
           {#if corrected}
             <button onclick={() => correct('reset')}>Volver a automática</button>
@@ -87,9 +107,13 @@
   </div>
   {#if panel}
     <div class="panel">
-      {#key panel}
-        <Identificar fingerprint={v.fingerprint} startWith={panel} ondone={done} />
-      {/key}
+      {#if panel === 'part'}
+        <SelectorVersion self={v.fingerprint} onpick={partOf} disabled={busy} />
+      {:else}
+        {#key panel}
+          <Identificar fingerprint={v.fingerprint} startWith={panel} ondone={done} />
+        {/key}
+      {/if}
       <button class="close" onclick={() => (panel = '')}>Cancelar</button>
     </div>
   {/if}
