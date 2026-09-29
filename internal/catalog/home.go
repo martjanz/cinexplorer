@@ -20,10 +20,18 @@ const (
 	RowCountry    = "country"
 	RowGenre      = "genre"
 	RowCollection = "collection"
+	RowList       = "list"
 )
 
 // rowSize is how many movies a row shows at most.
 const rowSize = 20
+
+// maxListRows is how many lists Inicio shows at most; minListRow, how
+// many movies a list needs for a row.
+const (
+	maxListRows = 2
+	minListRow  = 3
+)
 
 // HomeItem is a movie as a home row shows it.
 type HomeItem struct {
@@ -60,7 +68,7 @@ type group struct {
 
 // HomePage builds the home rows from the identified movies: the ones added
 // last, some drawn at random, and a random decade, director, country, genre
-// and TMDB collection with enough movies, in a random order. The same seed
+// and TMDB collection with enough movies, and the lists changed last, in a random order. The same seed
 // gives the same rows.
 func HomePage(snap store.Snapshot, seed uint64) Home {
 	var movies []*entry
@@ -147,6 +155,36 @@ func HomePage(snap store.Snapshot, seed uint64) Home {
 		}
 		return []string{strconv.Itoa(e.item.collectionID)}, []string{e.item.collection}
 	})
+
+	// The lists changed last, with their movies added last first.
+	lists := slices.Clone(snap.Lists)
+	slices.SortStableFunc(lists, func(a, b store.List) int {
+		return cmp.Or(-cmp.Compare(a.UpdatedAt, b.UpdatedAt), cmp.Compare(a.ID, b.ID))
+	})
+	shown := 0
+	for _, l := range lists {
+		if shown == maxListRows {
+			break
+		}
+		id := strconv.FormatInt(l.ID, 10)
+		var in []*entry
+		for _, e := range movies {
+			if _, ok := e.item.addedTo(id); ok {
+				in = append(in, e)
+			}
+		}
+		if len(in) < minListRow {
+			continue
+		}
+		slices.SortStableFunc(in, func(a, b *entry) int {
+			ta, _ := a.item.addedTo(id)
+			tb, _ := b.item.addedTo(id)
+			return cmp.Or(-cmp.Compare(ta, tb), cmp.Compare(a.item.norm, b.item.norm))
+		})
+		home.Rows = append(home.Rows, row(snap, RowList, group{value: id, label: l.Name, movies: in},
+			"/explorar?"+url.Values{FacetList: {id}}.Encode()))
+		shown++
+	}
 	rng.Shuffle(len(home.Rows), func(i, j int) { home.Rows[i], home.Rows[j] = home.Rows[j], home.Rows[i] })
 	return home
 }

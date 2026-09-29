@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"cinexplorer/internal/store"
@@ -143,5 +144,54 @@ func TestHomePageMinimums(t *testing.T) {
 	}
 	if h := HomePage(store.Snapshot{}, 1); h.Total != 0 || h.Rows == nil || len(h.Rows) != 0 {
 		t.Fatalf("empty: %+v", h)
+	}
+}
+
+func TestHomePageLists(t *testing.T) {
+	snap := homeSnapshot()
+	refs := func(added int64, rs ...string) []store.ListEntry {
+		var out []store.ListEntry
+		for i, r := range rs {
+			out = append(out, store.ListEntry{Ref: r, AddedAt: added + int64(i)})
+		}
+		return out
+	}
+	snap.Lists = []store.List{
+		{ID: 1, Name: "Vieja", UpdatedAt: 1, Entries: refs(1, "movie:100", "movie:101", "movie:102")},
+		{ID: 2, Name: "Corta", UpdatedAt: 5, Entries: refs(1, "movie:100", "movie:101")}, // fewer than 3
+		{ID: 3, Name: "Nueva", UpdatedAt: 9, Entries: []store.ListEntry{
+			{Ref: "fp:f5", AddedAt: 1}, // movie 105, through its content
+			{Ref: "movie:106", AddedAt: 3},
+			{Ref: "movie:107", AddedAt: 2},
+			{Ref: "fp:s1", AddedAt: 4}, // not identified: not in a home row
+		}},
+		{ID: 4, Name: "Otra", UpdatedAt: 3, Entries: refs(1, "movie:103", "movie:104", "movie:105")},
+	}
+	var lists []HomeRow
+	for _, r := range HomePage(snap, 1).Rows {
+		if r.Kind == RowList {
+			lists = append(lists, r)
+		}
+	}
+	slices.SortFunc(lists, func(a, b HomeRow) int { return strings.Compare(a.Value, b.Value) }) // rows are shuffled
+	if len(lists) != 2 {
+		t.Fatalf("list rows %+v", lists)
+	}
+	var got [][]int
+	for _, r := range lists {
+		var movies []int
+		for _, it := range r.Items {
+			movies = append(movies, it.TMDBID)
+		}
+		got = append(got, movies)
+	}
+	if n := lists[0]; n.Value != "3" || n.Label != "Nueva" || n.Href != "/explorar?lista=3" {
+		t.Fatalf("nueva %+v", n)
+	}
+	if o := lists[1]; o.Value != "4" || o.Label != "Otra" || o.Href != "/explorar?lista=4" {
+		t.Fatalf("otra %+v", o)
+	}
+	if want := [][]int{{106, 107, 105}, {105, 104, 103}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("movies %v", got)
 	}
 }
