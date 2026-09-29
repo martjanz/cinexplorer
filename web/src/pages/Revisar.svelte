@@ -1,4 +1,5 @@
 <script>
+  import Colecciones from '../components/Colecciones.svelte'
   import Duplicados from '../components/Duplicados.svelte'
   import SinIdentificar from '../components/SinIdentificar.svelte'
   import { api } from '../lib/api.js'
@@ -9,14 +10,15 @@
 
   let queue = $state(null)
   let dups = $state(null)
+  let folders = $state(null)
   let loads = 0
 
   async function load() {
     const id = ++loads
     try {
-      const [q, d] = await Promise.all([api.unidentified(), api.duplicates()])
+      const [q, d, c] = await Promise.all([api.unidentified(), api.duplicates(), api.collections()])
       if (id !== loads) return // a newer request is on its way
-      ;[queue, dups] = [q, d]
+      ;[queue, dups, folders] = [q, d, c]
     } catch (e) {
       if (id === loads) notify(e.message)
     }
@@ -33,6 +35,12 @@
     loads++
     queue.items = queue.items.filter((it) => it.fingerprint !== fingerprint)
   }
+
+  // A folder was imported or dismissed: drop it without reloading.
+  function folderDone(path) {
+    loads++
+    folders = folders.filter((f) => f.path !== path)
+  }
 </script>
 
 <svelte:head><title>Revisar · Cinexplorer</title></svelte:head>
@@ -45,12 +53,17 @@
   <a href="/revisar/duplicados" class:on={tab === 'duplicados'}>
     Duplicados {#if dups}({dups.groups.length} · {size(dups.recoverable)}){/if}
   </a>
+  <a href="/revisar/colecciones" class:on={tab === 'colecciones'}>
+    Colecciones {#if folders}({folders.length}){/if}
+  </a>
 </nav>
 
 {#if tab === 'sin-identificar' && queue}
   <SinIdentificar items={queue.items} onresolved={resolved} />
 {:else if tab === 'duplicados' && dups}
   <Duplicados report={dups} />
+{:else if tab === 'colecciones' && folders}
+  <Colecciones {folders} ondone={folderDone} />
 {/if}
 
 <style>
