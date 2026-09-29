@@ -91,3 +91,12 @@ CREATE TABLE IF NOT EXISTS identifications (
 );
 
 CREATE INDEX IF NOT EXISTS identifications_tmdb ON identifications(tmdb_id);
+
+-- A version the user says is a further part of another one: what the scan
+-- rebuilds apart is merged again by ApplyPartLinks. Fingerprints are the
+-- representative files' of each version.
+CREATE TABLE IF NOT EXISTS part_links (
+  fingerprint TEXT    PRIMARY KEY,
+  leader      TEXT    NOT NULL,
+  created_at  INTEGER NOT NULL          -- unix milliseconds
+);

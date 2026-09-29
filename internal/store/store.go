@@ -23,8 +23,9 @@ type Store struct {
 	// hasMedia and hasIdentity are false for an older catalog opened
 	// read-only: the schema only runs on writable opens, so the tables of
 	// later stages may not exist.
-	hasMedia    bool
-	hasIdentity bool
+	hasMedia     bool
+	hasIdentity  bool
+	hasPartLinks bool
 	// hasFirstSeen is false for a catalog from before files.first_seen
 	// opened read-only.
 	hasFirstSeen bool
@@ -80,6 +81,8 @@ type VersionView struct {
 	Fingerprint    string     `json:"fingerprint"`
 	Identification *IdentView `json:"identification"`
 	Movie          *MovieRef  `json:"movie"`
+	// PartLinked: the user merged other versions into this one as its parts.
+	PartLinked bool `json:"partLinked"`
 }
 
 type IdentView struct {
@@ -136,7 +139,7 @@ func openDB(dsn string, migrate bool) (*Store, error) {
 		}
 	}
 	s := &Store{db: db}
-	for name, dst := range map[string]*bool{"media": &s.hasMedia, "identifications": &s.hasIdentity} {
+	for name, dst := range map[string]*bool{"media": &s.hasMedia, "identifications": &s.hasIdentity, "part_links": &s.hasPartLinks} {
 		if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(dst); err != nil {
 			db.Close()
 			return nil, err
@@ -474,6 +477,9 @@ func (s *Store) versions(tx querier) ([]VersionView, error) {
 		return nil, err
 	}
 	if err := s.attachIdentity(tx, out, pos); err != nil {
+		return nil, err
+	}
+	if err := s.attachPartLinks(tx, out); err != nil {
 		return nil, err
 	}
 	markBest(out)
