@@ -17,6 +17,7 @@
     </a>
     <a class="home" href="/" class:active={page === 'inicio'}>Inicio</a>
     <a href="/explorar" class:active={page === 'explorar'}>Explorar</a>
+    <a href="/listas" class:active={page === 'listas'}>Listas</a>
     <a href="/revisar" class:active={page === 'revisar'}>Revisar</a>
     <span class="spacer"></span>
     <Busqueda />

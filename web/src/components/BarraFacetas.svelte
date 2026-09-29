@@ -1,5 +1,5 @@
 <script>
-  import { chips, FACETS, ORDERS, valueLabel, withFacet, withOrder } from '../lib/facets.js'
+  import { chips, FACETS, ordersFor, valueLabel, withFacet, withOrder } from '../lib/facets.js'
 
   // query: the applied query; facets: the server's counts per facet;
   // onchange(query): a new query was chosen.
@@ -101,7 +101,7 @@
   <div class="right">
     <span class="total">{total} {total === 1 ? 'película' : 'películas'}</span>
     <select value={query.order} onchange={(e) => onchange(withOrder(query, e.currentTarget.value))} aria-label="Orden">
-      {#each ORDERS as o (o.value)}
+      {#each ordersFor(query) as o (o.value)}
         <option value={o.value}>{o.label}</option>
       {/each}
     </select>

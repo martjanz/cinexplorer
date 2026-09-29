@@ -8,6 +8,7 @@
   import Buscar from './pages/Buscar.svelte'
   import Explorar from './pages/Explorar.svelte'
   import Inicio from './pages/Inicio.svelte'
+  import Listas from './pages/Listas.svelte'
   import Pelicula from './pages/Pelicula.svelte'
   import Revisar from './pages/Revisar.svelte'
   import Version from './pages/Version.svelte'
@@ -42,6 +43,8 @@
     <Inicio />
   {:else if current.page === 'explorar'}
     <Explorar />
+  {:else if current.page === 'listas'}
+    <Listas />
   {:else if current.page === 'buscar'}
     <Buscar />
   {:else if current.page === 'ajustes'}

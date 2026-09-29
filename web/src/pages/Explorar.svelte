@@ -55,6 +55,16 @@
     navigate('/explorar' + toSearch(q))
   }
 
+  // Takes an item out of the list shown; the grid reloads in place.
+  async function remove(item) {
+    try {
+      await api.removeFromList(data.list.id, item)
+      load(route.search)
+    } catch (e) {
+      notify(e.message)
+    }
+  }
+
   // Draw the next batch when the end of the grid comes into view.
   $effect(() => {
     if (!sentinel) return
@@ -72,17 +82,25 @@
   const filtered = $derived(Object.keys(query.facets).length > 0)
 </script>
 
-<svelte:head><title>Explorar · Cinexplorer</title></svelte:head>
+<svelte:head><title>{data?.list ? `${data.list.name} · Cinexplorer` : 'Explorar · Cinexplorer'}</title></svelte:head>
 
 {#if data}
+  {#if data.list}<h1 class="list-title">{data.list.name}</h1>{/if}
   <BarraFacetas {query} facets={data.facets} total={data.total} onchange={change} />
   {#if data.items.length}
     <div class="grid">
       {#each data.items.slice(0, shown) as item (item.kind === 'movie' ? `m${item.tmdbId}` : `v${item.key}`)}
-        <Afiche {item} />
+        <div class="cell">
+          <Afiche {item} />
+          {#if data.list && !app.status?.readOnly}
+            <button class="remove" onclick={() => remove(item)} title="Quitar de la lista" aria-label="Quitar de la lista">✕</button>
+          {/if}
+        </div>
       {/each}
     </div>
     <div bind:this={sentinel}></div>
+  {:else if data.list && Object.keys(query.facets).length === 1}
+    <p class="empty">Esta lista está vacía. Agregá películas desde su ficha con “+”.</p>
   {:else if filtered}
     <p class="empty">Nada con estos filtros. <a href="/explorar">Quitar filtros</a></p>
   {:else if scanning}
@@ -93,6 +111,35 @@
 {/if}
 
 <style>
+  .list-title {
+    margin: 0 0 12px;
+    font-size: 20px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--strong);
+  }
+  .cell {
+    position: relative;
+    min-width: 0;
+  }
+  .remove {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 0 7px;
+    font-size: 12px;
+    background: rgba(20, 23, 28, 0.8);
+    opacity: 0;
+  }
+  .cell:hover .remove,
+  .remove:focus-visible {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .remove {
+      opacity: 1;
+    }
+  }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
