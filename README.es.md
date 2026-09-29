@@ -28,7 +28,7 @@ El proyecto avanza por etapas (ver `docs/superpowers/specs/`):
 | 3. Identificación | TMDB + Wikidata, puntaje de confianza, correcciones, afiches | ✅ |
 | 4a. Catálogo navegable | interfaz Svelte: Explorar con facetas, Ficha, Revisar | ✅ |
 | 4b. Descubrimiento | Inicio, búsqueda instantánea, asistente de primer uso, Ajustes | ✅ |
-| 5. Curaduría | listas, etiquetas, importación de `Collections/` | pendiente |
+| 5. Curaduría | listas, importación de `Collections/` | ✅ |
 
 La interfaz tiene estas partes:
 
@@ -42,10 +42,15 @@ La interfaz tiene estas partes:
 
 - **Explorar:** la colección como grilla de afiches, con facetas combinables
   (década y año, director, género, país, resolución, subtítulos, idioma
-  original, colección, ubicación en disco y estado) y orden por año, título,
+  original, colección, lista, ubicación en disco y estado) y orden por año, título,
   fecha de alta o tamaño. Los filtros quedan en la dirección de la página, así
   que se pueden guardar como favoritos y el botón "atrás" funciona. Lo que
   todavía no está identificado aparece igual, con un afiche genérico.
+- **Listas:** listas propias de películas, creadas desde la página Listas o con
+  **+** en la ficha. Una lista se abre como Explorar filtrado por ella, ordenada
+  por fecha de agregado (o cualquier otro orden). También pueden guardarse
+  archivos sin identificar, que se muestran como su película cuando se
+  identifican. Inicio muestra las listas cambiadas hace menos.
 - **Ficha de cada película:** datos de TMDB y, debajo, cada versión en disco
   con su calidad, audio, subtítulos, la marca **MEJOR** y **COPIA IDÉNTICA**,
   y los botones ▶ Ver y Carpeta. El menú ⋯ de cada versión corrige la
@@ -55,7 +60,9 @@ La interfaz tiene estas partes:
 - **Revisar:** la cola de **Sin identificar** (candidatos, búsqueda manual, "no
   es una película", "es un extra de…", con atajos de teclado) y los
   **Duplicados** (copias idénticas y varias versiones de una película, con el
-  espacio que se podría recuperar).
+  espacio que se podría recuperar), y **Colecciones**: cada subcarpeta de una carpeta
+  `Collections/`, ofrecida como lista para importar o descartar; lo que se agregue
+  después se vuelve a ofrecer.
 
 - **Ajustes** (el engranaje): carpetas, token de TMDB, idioma de los datos y
   descarga de imágenes. Los cambios se aplican sin reiniciar la app.
@@ -234,17 +241,22 @@ Todo queda en la carpeta de la app; borrarlos no afecta a las películas.
 
 ## API
 
-La interfaz usa una API JSON local; también sirve para scripts. Los `POST`
+La interfaz usa una API JSON local; también sirve para scripts. Las escrituras (`POST`, `PUT`, `PATCH`, `DELETE`)
 requieren `Content-Type: application/json`.
 
 | Método y ruta | Qué hace |
 |---|---|
 | `GET /api/status` | Estado del escaneo y de la identificación, y si falta el primer uso (`setupPending`). |
 | `GET /api/home?seed=` | Filas del Inicio (la misma semilla da las mismas filas). |
+| `GET /api/lists`, `POST /api/lists` | Las listas (nombre, cantidad, portada), o crear una: `{"name"}`. |
+| `PATCH /api/lists/{id}`, `DELETE /api/lists/{id}` | Renombrar (`{"name"}`) o borrar una lista; nunca toca archivos. |
+| `POST /api/lists/{id}/entries`, `DELETE /api/lists/{id}/entries` | Agregar o quitar un ítem: `{"tmdbId"}` o `{"key"}` (la huella de un ítem sin identificar). |
+| `GET /api/collections` | Carpetas de `Collections/` con algo para importar. |
+| `POST /api/collections/import`, `POST /api/collections/dismiss` | Importar una carpeta a una lista nueva (`{"path", "name"}`) o existente (`{"path", "listId"}`), o descartarla (`{"path"}`). |
 | `GET /api/search?q=&limit=` | Búsqueda en el catálogo: ítems y directores que coinciden. |
 | `GET /api/config`, `PUT /api/config` | Ajustes (el token nunca se devuelve). En `PUT`, `token` ausente o `null` conserva el guardado y `""` lo quita. |
 | `POST /api/config/root`, `POST /api/config/token` | Valida una carpeta, o verifica un token con TMDB. |
-| `GET /api/explore?decada=&anio=&director=&genero=&pais=&idioma=&coleccion=&resolucion=&subs=&ubicacion=&estado=&orden=&dir=` | Ítems de Explorar que cumplen las facetas, y los valores de cada faceta con su conteo. |
+| `GET /api/explore?decada=&anio=&director=&genero=&pais=&idioma=&coleccion=&lista=&resolucion=&subs=&ubicacion=&estado=&orden=&dir=` | Ítems de Explorar que cumplen las facetas, y los valores de cada faceta con su conteo. |
 | `GET /api/movies/{tmdbId}` | Ficha de una película: datos, versiones y extras. |
 | `GET /api/movies?q=&near=` | Películas del catálogo para "es un extra de…". |
 | `GET /api/versions/{huella}` | Ficha de una versión que no es (todavía) una película del catálogo. |

@@ -32,7 +32,7 @@ type MovieDetail struct {
 	Versions      []VersionCard `json:"versions"`
 	Extras        []ExtraFile   `json:"extras"`
 	ExtraVersions []VersionCard `json:"extraVersions"` // versions corrected as extras of this movie
-	Lists         []ListRef     `json:"lists"`        // the lists that hold it
+	Lists         []ListRef     `json:"lists"`         // the lists that hold it
 }
 
 // Movie returns the page of a stored movie: its versions (the best first,

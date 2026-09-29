@@ -69,11 +69,11 @@ func TestCollectionsEndpoints(t *testing.T) {
 		t.Fatalf("folders %+v", fs)
 	}
 	for body, want := range map[string]int{
-		`{"path":"` + kubrick + `"}`:                            http.StatusBadRequest, // neither a name nor a list
-		`{"path":"` + kubrick + `","name":"K","listId":1}`:      http.StatusBadRequest, // both
-		`{"path":"../cine/Collections/Nada","name":"Nada"}`:     http.StatusNotFound,
-		`{"path":"` + kubrick + `","listId":999}`:               http.StatusNotFound,
-		`{"path":"` + kubrick + `","name":" "}`:                 http.StatusBadRequest, // a blank name
+		`{"path":"` + kubrick + `"}`:                        http.StatusBadRequest, // neither a name nor a list
+		`{"path":"` + kubrick + `","name":"K","listId":1}`:  http.StatusBadRequest, // both
+		`{"path":"../cine/Collections/Nada","name":"Nada"}`: http.StatusNotFound,
+		`{"path":"` + kubrick + `","listId":999}`:           http.StatusNotFound,
+		`{"path":"` + kubrick + `","name":" "}`:             http.StatusBadRequest, // a blank name
 	} {
 		if code := sendRec(t, s, "POST", "/api/collections/import", body).Code; code != want {
 			t.Errorf("import %s: %d, want %d", body, code, want)

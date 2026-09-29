@@ -3,10 +3,10 @@ package store
 // Snapshot is the whole catalog as the pages see it, read at one point in
 // time.
 type Snapshot struct {
-	Versions        []VersionView              // as Versions returns them
-	Identifications map[string]*Identification // by fingerprint
-	Movies          map[int]Movie              // by TMDB id
-	Lists           []List                     // by id, entries oldest first
+	Versions          []VersionView                 // as Versions returns them
+	Identifications   map[string]*Identification    // by fingerprint
+	Movies            map[int]Movie                 // by TMDB id
+	Lists             []List                        // by id, entries oldest first
 	CollectionFolders map[string]CollectionDecision // by folder path
 	// Changes counts the rows written through the catalog's connection
 	// since it was opened: it differs between two snapshots when the

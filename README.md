@@ -31,9 +31,14 @@ browser. It doesn't matter how the folders are organized on disk.
   opens a page with all results.
 - **Explore** (*Explorar*): the whole collection as a poster grid, with combinable facets
   (decade and year, director, genre, country, resolution, subtitles, original
-  language, collection, disk location and status) and sorting by year, title,
+  language, collection, list, disk location and status) and sorting by year, title,
   date added or size. Filters live in the URL, so you can bookmark them and the
   back button works. Unidentified files still show up, with a generic poster.
+- **Lists** (*Listas*): your own lists of movies, created from the Lists page or
+  with **+** on a movie's page. A list opens as Explore filtered by it, sorted
+  by date added (or any other order). Unidentified files can go in a list too,
+  and show up as their movie once identified. Home shows the lists you changed
+  last.
 - **Movie page:** TMDB data and, below it, every version on disk with its
   quality, audio and subtitles, **BEST** and **IDENTICAL COPY** badges, and
   ▶ Play / Folder buttons. Each version's ⋯ menu fixes its identification.
@@ -42,7 +47,7 @@ browser. It doesn't matter how the folders are organized on disk.
   merges any two versions by hand.
 - **Review** (*Revisar*): the **Unidentified** queue (candidates, manual search, "not a
   movie", "extra of…", with keyboard shortcuts) and **Duplicates** (identical
-  copies and multiple versions of a film, with the space you could reclaim).
+  copies and multiple versions of a film, with the space you could reclaim), and **Collections**: each subfolder of a `Collections/` folder, offered as a list to import or dismiss; files added to it later are offered again.
 - **Settings** (*Ajustes*, gear icon): folders, TMDB token, data language and image
   downloads. Changes apply without restarting.
 
@@ -216,7 +221,7 @@ Everything lives in the app folder; deleting it doesn't affect your movies.
 
 ## API
 
-The interface uses a local JSON API that also works for scripts. `POST`
+The interface uses a local JSON API that also works for scripts. Write (`POST`, `PUT`, `PATCH`, `DELETE`)
 requests require `Content-Type: application/json`. Some parameter names are in
 Spanish (`decada` = decade, `anio` = year, `pais` = country, `orden` = sort…).
 
@@ -224,10 +229,15 @@ Spanish (`decada` = decade, `anio` = year, `pais` = country, `orden` = sort…).
 |---|---|
 | `GET /api/status` | Scan and identification status, and whether first-run setup is pending (`setupPending`). |
 | `GET /api/home?seed=` | Home rows (the same seed yields the same rows). |
+| `GET /api/lists`, `POST /api/lists` | The lists (name, count, cover), or create one: `{"name"}`. |
+| `PATCH /api/lists/{id}`, `DELETE /api/lists/{id}` | Rename (`{"name"}`) or delete a list; files are never touched. |
+| `POST /api/lists/{id}/entries`, `DELETE /api/lists/{id}/entries` | Add or remove an item: `{"tmdbId"}` or `{"key"}` (an unidentified item's fingerprint). |
+| `GET /api/collections` | `Collections/` folders with something to import. |
+| `POST /api/collections/import`, `POST /api/collections/dismiss` | Import a folder into a new list (`{"path", "name"}`) or an existing one (`{"path", "listId"}`), or dismiss it (`{"path"}`). |
 | `GET /api/search?q=&limit=` | Catalog search: matching items and directors. |
 | `GET /api/config`, `PUT /api/config` | Settings (the token is never returned). On `PUT`, a missing or `null` `token` keeps the saved one and `""` clears it. |
 | `POST /api/config/root`, `POST /api/config/token` | Validate a folder, or verify a token with TMDB. |
-| `GET /api/explore?decada=&anio=&director=&genero=&pais=&idioma=&coleccion=&resolucion=&subs=&ubicacion=&estado=&orden=&dir=` | Explore items matching the facets, plus each facet's values with counts. |
+| `GET /api/explore?decada=&anio=&director=&genero=&pais=&idioma=&coleccion=&lista=&resolucion=&subs=&ubicacion=&estado=&orden=&dir=` | Explore items matching the facets, plus each facet's values with counts. |
 | `GET /api/movies/{tmdbId}` | A movie's page: data, versions and extras. |
 | `GET /api/movies?q=&near=` | Catalog movies for "extra of…". |
 | `GET /api/versions/{fingerprint}` | Page for a version that isn't (yet) a catalog movie. |
@@ -322,7 +332,7 @@ Design docs and plans for each stage are in `docs/superpowers/specs/` and
 | 3. Identification | TMDB + Wikidata, confidence score, corrections, posters | ✅ |
 | 4a. Browsable catalog | Svelte interface: faceted Explore, movie page, Review | ✅ |
 | 4b. Discovery | Home, instant search, setup wizard, Settings | ✅ |
-| 5. Curation | lists, tags, importing `Collections/` | planned |
+| 5. Curation | lists, importing `Collections/` | ✅ |
 
 ## Troubleshooting
 
