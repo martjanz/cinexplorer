@@ -46,6 +46,7 @@ func TestOlderReadOnlyCatalogHasNoIdentity(t *testing.T) {
 	}
 	s.db.Exec(`DROP TABLE identifications`)
 	s.db.Exec(`DROP TABLE movies`)
+	s.db.Exec(`DROP TABLE part_links`)
 	s.Close()
 	ro, err := Open(path, true)
 	if err != nil {
@@ -54,6 +55,12 @@ func TestOlderReadOnlyCatalogHasNoIdentity(t *testing.T) {
 	defer ro.Close()
 	if _, err := ro.Versions(); err != nil {
 		t.Fatal(err)
+	}
+	if n, err := ro.ApplyPartLinks(); n != 0 || err != nil {
+		t.Fatalf("apply %d %v", n, err)
+	}
+	if n, err := ro.Unlink("x"); n != 0 || err != nil {
+		t.Fatalf("unlink %d %v", n, err)
 	}
 	if ts, err := ro.IdentifyTargets(); err != nil || ts != nil {
 		t.Fatalf("targets %v %v", ts, err)

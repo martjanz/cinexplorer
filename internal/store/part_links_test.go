@@ -106,7 +106,7 @@ func TestSetPartLinkValidates(t *testing.T) {
 	}
 }
 
-func TestPartLinkChainOrdersPartsByLinkOrder(t *testing.T) {
+func TestPartLinkChainMergesAllInOrder(t *testing.T) {
 	s := partCatalog(t)
 	if err := s.SetPartLink("s3", "s2"); err != nil { // C joins B
 		t.Fatal(err)
@@ -206,5 +206,21 @@ func TestUnlink(t *testing.T) {
 		if v.PartLinked {
 			t.Fatalf("%q still marked linked", v.Title)
 		}
+	}
+}
+
+func TestSetPartLinkRejectsCycleThroughFollower(t *testing.T) {
+	s := partCatalog(t)
+	for _, q := range [][2]string{{"s1", "s2"}, {"s2", "s3"}} {
+		if _, err := s.db.Exec(`INSERT INTO part_links (fingerprint, leader, created_at) VALUES (?, ?, 0)`, q[0], q[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetPartLink("s2", "s1"); !errors.Is(err, ErrPartLink) {
+		t.Fatalf("want ErrPartLink, got %v", err)
+	}
+	var leader string
+	if err := s.db.QueryRow(`SELECT leader FROM part_links WHERE fingerprint = 's2'`).Scan(&leader); err != nil || leader != "s3" {
+		t.Fatalf("s2 link changed: %q, %v", leader, err)
 	}
 }

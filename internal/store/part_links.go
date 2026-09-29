@@ -36,8 +36,17 @@ func (s *Store) SetPartLink(follower, leader string) error {
 	if err != nil {
 		return err
 	}
-	if end, ok := finalLeader(links, leader); !ok || end == follower {
-		return ErrPartLink // it would close a cycle
+	// Walk from the leader along the stored links: reaching the follower at
+	// any step (or looping) means the new link would close a cycle.
+	for cur, steps := leader, 0; ; steps++ {
+		if cur == follower || steps > len(links) {
+			return ErrPartLink
+		}
+		next, linked := links[cur]
+		if !linked {
+			break
+		}
+		cur = next
 	}
 	if _, err := s.db.Exec(`INSERT INTO part_links (fingerprint, leader, created_at) VALUES (?, ?, ?)
 		ON CONFLICT(fingerprint) DO UPDATE SET leader = excluded.leader, created_at = excluded.created_at`,
@@ -101,7 +110,8 @@ func finalLeader(links map[string]string, fp string) (string, bool) {
 	return "", false
 }
 
-// attachPartLinks marks the versions that have parts merged in by hand.
+// attachPartLinks marks the versions that lead links (their parts are not
+// necessarily merged yet).
 func (s *Store) attachPartLinks(tx querier, out []VersionView) error {
 	links, err := s.partLinks(tx)
 	if err != nil || len(links) == 0 {

@@ -81,7 +81,8 @@ type VersionView struct {
 	Fingerprint    string     `json:"fingerprint"`
 	Identification *IdentView `json:"identification"`
 	Movie          *MovieRef  `json:"movie"`
-	// PartLinked: the user merged other versions into this one as its parts.
+	// PartLinked: the user linked other versions to this one as its parts (the
+	// version leads links; they may not be merged yet).
 	PartLinked bool `json:"partLinked"`
 }
 
