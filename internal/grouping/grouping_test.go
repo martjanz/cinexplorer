@@ -250,6 +250,27 @@ func TestSameNamePartsAreNotExtrasBySize(t *testing.T) {
 	}
 }
 
+func TestSequelsWithPartNumbersStaySeparate(t *testing.T) {
+	dir := "../cine-ordenar"
+	for _, tc := range [][2]string{
+		{"The Hunger Games Mockingjay Part 1 (2014).mkv", "The Hunger Games Mockingjay Part 2 (2015).mkv"},
+		{"Harry Potter and the Deathly Hallows Part 1 (2010) 1080p.mkv", "Harry Potter and the Deathly Hallows Part 2 (2011) 1080p.mkv"},
+	} {
+		vs := Build([]Entry{
+			{dir + "/" + tc[0], 4_000_000_000, mediafile.Video},
+			{dir + "/" + tc[1], 4_000_000_000, mediafile.Video},
+		}, roots)
+		if len(vs) != 2 {
+			t.Fatalf("%s: want 2 versions, got %d: %+v", tc[0], len(vs), vs)
+		}
+		for _, v := range vs {
+			if v.Parts != 1 {
+				t.Fatalf("%s: parts=%d", tc[0], v.Parts)
+			}
+		}
+	}
+}
+
 func TestMarkedExtrasDoNotFormPartSets(t *testing.T) {
 	dir := "../cine-ordenar/Movie"
 	v := only(t, Build([]Entry{

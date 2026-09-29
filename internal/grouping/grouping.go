@@ -331,9 +331,19 @@ func partSets(es []Entry) map[string]partSet {
 				repeated = true
 			}
 		}
-		if !repeated {
-			out[k] = partSet{varying: len(s.bases) > 1}
+		if repeated {
+			continue
 		}
+		// Different years after the marker ("Part 1 (2014)", "Part 2
+		// (2015)") mean different films (sequels), not parts of one.
+		years := map[int]bool{}
+		for b := range s.bases {
+			years[nameparse.Parse(b).Year] = true
+		}
+		if len(s.bases) > 1 && len(years) > 1 {
+			continue
+		}
+		out[k] = partSet{varying: len(s.bases) > 1}
 	}
 	return out
 }
