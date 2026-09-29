@@ -96,8 +96,8 @@ func listsOf(snap store.Snapshot, itemID string) []ListRef {
 }
 
 // ItemRef is the entry that adds an item to a list: a stored movie by its
-// TMDB id, or a present content by its fingerprint (the item's key). ok is
-// false for anything else.
+// TMDB id, or a content by its fingerprint (the item's key) when it leads to
+// a present item. ok is false for anything else.
 func ItemRef(snap store.Snapshot, tmdbID int, key string) (string, bool) {
 	if tmdbID > 0 {
 		if _, ok := snap.Movies[tmdbID]; ok {
@@ -105,10 +105,12 @@ func ItemRef(snap store.Snapshot, tmdbID int, key string) (string, bool) {
 		}
 		return "", false
 	}
-	for i := range snap.Versions {
-		if v := &snap.Versions[i]; key != "" && v.Fingerprint == key && hasPresentMain(v) {
-			return store.RefFingerprint(key), true
-		}
+	if key == "" {
+		return "", false
+	}
+	ref := store.RefFingerprint(key)
+	if _, ok := targets(build(snap, nil))[ref]; ok {
+		return ref, true
 	}
 	return "", false
 }
@@ -123,13 +125,22 @@ func RefsTo(snap store.Snapshot, listID int64, tmdbID int, key string) []string 
 	}
 	to := targets(build(snap, nil))
 	target := to[direct]
+	// The entries of the movie's versions, present or not.
+	versions := map[string]bool{}
+	if tmdbID > 0 {
+		for fp, id := range snap.Identifications {
+			if id.TMDBID == tmdbID && (id.Status == store.StatusAuto || id.Status == store.StatusManual) {
+				versions[store.RefFingerprint(fp)] = true
+			}
+		}
+	}
 	var out []string
 	for _, l := range snap.Lists {
 		if l.ID != listID {
 			continue
 		}
 		for _, en := range l.Entries {
-			if en.Ref == direct || (target != nil && to[en.Ref] == target) {
+			if en.Ref == direct || versions[en.Ref] || (target != nil && to[en.Ref] == target) {
 				out = append(out, en.Ref)
 			}
 		}

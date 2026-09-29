@@ -84,6 +84,8 @@ func TestItemRef(t *testing.T) {
 		{1, "", "", false},       // not stored
 		{0, "s1", "fp:s1", true}, // a present content
 		{0, "g1", "", false},     // missing from disk
+		{0, "e1", "", false},     // marked as an extra
+		{0, "x1", "", false},     // marked as not a movie
 		{0, "id:9", "", false},   // no fingerprint
 		{0, "", "", false},
 	}
@@ -185,5 +187,20 @@ func TestApplyLists(t *testing.T) {
 	plain := Query{Facets: map[string]string{}, Order: OrderTitle, Dir: Asc}
 	if got, list := ApplyLists(plain, snap); !reflect.DeepEqual(got, plain) || list != nil {
 		t.Fatalf("no list: %+v %+v", got, list)
+	}
+}
+
+func TestRefsToMissingVersion(t *testing.T) {
+	snap := withLists(snapshot())
+	// A version of Amarcord on a drive that is not connected.
+	a9 := identified(version(12, "../cine/1970s/Amarcord", "Amarcord.mkv", "a9", "Amarcord", 1973, "720p", 700, 100), store.StatusAuto, 7857)
+	a9.Files[0].Missing = true
+	snap.Versions = append(snap.Versions, a9)
+	snap.Identifications["a9"] = &store.Identification{Fingerprint: "a9", Status: store.StatusAuto, TMDBID: 7857}
+	snap.Lists[0].Entries = append(snap.Lists[0].Entries, store.ListEntry{Ref: "fp:a9", AddedAt: 4})
+	got := RefsTo(snap, 1, 7857, "")
+	slices.Sort(got)
+	if want := []string{"fp:a2", "fp:a9", "movie:7857"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("amarcord %v", got)
 	}
 }

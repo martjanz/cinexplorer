@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 
 	"cinexplorer/internal/catalog"
@@ -30,7 +31,12 @@ func (s *Server) explore(w http.ResponseWriter, r *http.Request) {
 	all := catalog.Items(snap, s.rt().Config.Roots)
 	items := catalog.Filter(all, q.Facets)
 	catalog.SortQuery(items, q)
-	writeJSON(w, map[string]any{"total": len(items), "query": q, "items": items, "facets": catalog.Counts(all, q.Facets), "list": list})
+	facets := catalog.Counts(all, q.Facets)
+	// A list with no matching items still needs its name for the chip.
+	if list != nil && !slices.ContainsFunc(facets[catalog.FacetList], func(v catalog.FacetValue) bool { return v.Value == q.Facets[catalog.FacetList] }) {
+		facets[catalog.FacetList] = append(facets[catalog.FacetList], catalog.FacetValue{Value: q.Facets[catalog.FacetList], Label: list.Name})
+	}
+	writeJSON(w, map[string]any{"total": len(items), "query": q, "items": items, "facets": facets, "list": list})
 }
 
 // home answers the home page: rows of movies, drawn with the page's seed.

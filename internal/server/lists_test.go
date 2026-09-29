@@ -26,6 +26,12 @@ func TestListsEndpoints(t *testing.T) {
 	}
 
 	path := fmt.Sprintf("/api/lists/%d", l.ID)
+	// An empty list still names itself in the lista facet, so the chip has a label.
+	var empty exploreBody
+	getJSON(t, s, fmt.Sprintf("/api/explore?lista=%d", l.ID), &empty)
+	if fv := empty.Facets["lista"]; len(fv) != 1 || fv[0].Value != fmt.Sprint(l.ID) || fv[0].Label != "Por ver" || fv[0].Count != 0 {
+		t.Fatalf("empty list facet %+v", fv)
+	}
 	// The unidentified Amarcord, by its key (its fingerprint).
 	if code := request(s.Handler(), "POST", path+"/entries", `{"key":"f1"}`, "application/json", "127.0.0.1").Code; code != http.StatusNoContent {
 		t.Fatalf("add %d", code)
