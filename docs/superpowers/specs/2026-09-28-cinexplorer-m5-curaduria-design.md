@@ -76,7 +76,7 @@ Todo en `internal/catalog`, sin SQL, como el resto del paquete.
 `store.Snapshot` suma:
 
 - `Lists []List` — cada lista con `ID`, `Name`, `CreatedAt`, `UpdatedAt` y sus entradas (`Ref`, `AddedAt`).
-- `CollectionFolders map[string]CollectionFolder` — por ruta: `Status`, `ListID` y el conjunto de huellas vistas.
+- `CollectionFolders map[string]CollectionDecision` — por ruta: `Status`, `ListID` y el conjunto de huellas vistas.
 
 ### 3.2 Resolución de entradas
 
@@ -105,7 +105,7 @@ Cada entrada se resuelve contra los ítems de Explorar (`build`):
 
 ### 3.5 Inicio
 
-Tipo de fila nuevo `RowList = "list"`: hasta 2 listas, las de `updated_at` más reciente primero, con al menos 3 ítems presentes cada una. "Ver todas →" lleva a `/explorar?lista=<id>`. Van después de "agregadas recientemente".
+Tipo de fila nuevo `RowList = "list"`: hasta 2 listas, las de `updated_at` más reciente primero, con al menos 3 películas identificadas presentes cada una (las filas de Inicio solo muestran películas), de la agregada más recientemente a la más antigua. "Ver todas →" lleva a `/explorar?lista=<id>`. Entran al orden aleatorio de las filas como las demás: Inicio ya mezcla todas sus filas, "agregadas recientemente" incluida.
 
 ## 4. API
 
@@ -114,13 +114,13 @@ Las escrituras pasan por `jsonOnly`, como las existentes.
 | Ruta | Qué hace |
 |---|---|
 | `GET /api/lists` | Índice: `id`, `name`, `count` (ítems presentes), `updatedAt`, `cover` (imagen de escena del ítem agregado más recientemente que tenga una). Orden: `updatedAt` descendente. |
-| `POST /api/lists` `{name}` | Crea; devuelve la lista. |
+| `POST /api/lists` `{name}` | Crea; responde 201 con `{id, name}`. |
 | `PATCH /api/lists/{id}` `{name}` | Renombra. |
 | `DELETE /api/lists/{id}` | Borra la lista (nunca archivos). |
 | `POST /api/lists/{id}/entries` `{tmdbId}` o `{key}` | Agrega una película o un ítem sin identificar. Idempotente. |
 | `DELETE /api/lists/{id}/entries` `{tmdbId}` o `{key}` | Quita las entradas que llevan a ese ítem (§2). |
 | `GET /api/collections` | Carpetas pendientes (§3.4). |
-| `POST /api/collections/import` `{path, name}` o `{path, listId}` | Importa como lista nueva, a una lista existente, o suma novedades a la lista de una importación previa. Agrega solo las novedades y las marca como vistas. |
+| `POST /api/collections/import` `{path, name}` o `{path, listId}` | Importa como lista nueva, a una lista existente, o suma novedades a la lista de una importación previa. Agrega solo las novedades y las marca como vistas. Responde `{listId}`. |
 | `POST /api/collections/dismiss` `{path}` | Descarta: marca todo el contenido actual como visto. |
 
 `GET /api/movies/{id}` y `GET /api/versions/{key}` suman `lists: [{id, name}]`: las listas que contienen ese ítem.
