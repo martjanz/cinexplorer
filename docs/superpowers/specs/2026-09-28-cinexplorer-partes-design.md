@@ -29,6 +29,8 @@ Salvaguardas:
 3. Si el marcador es lo último del nombre (`Novecento - Part 1`), el resultado es el mismo que hoy.
 4. Los subtítulos siguen asociándose por prefijo del nombre base; con el prefijo nuevo como clave, `Shoah - Part 2 - Treblinka.es.srt` cae en la versión correcta.
 5. El nombre parseado (`Parsed`) sale del prefijo, no de un nombre con el título de cada parte pegado.
+6. Si un número de parte se repite dentro del mismo prefijo (`Movie.CD1.720p`, `Movie.CD2.720p`, `Movie.CD1.1080p`, `Movie.CD2.1080p`), son varias copias de la misma película y no se agrupan por prefijo: queda el comportamiento actual.
+7. Se agrupa por prefijo solo si los nombres base difieren; si son iguales salvo el marcador, sigue valiendo el agrupado de siempre (que conserva las etiquetas de calidad que siguen al marcador, como `720p`). La exención de la regla de extra por tamaño vale para todo conjunto de partes, también para los de mismo nombre.
 
 ## 4. Agrupado manual
 

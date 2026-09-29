@@ -130,16 +130,23 @@ func buildDir(dir string, es []Entry, dirIsRoot bool) []Version {
 	byKey := map[string]*Version{}
 	var extras []Member
 	var dvd *Version
+	sets := partSets(es)
 
 	for _, e := range es {
 		switch e.Kind {
 		case mediafile.Video:
 			name := stem(e.Path)
-			if isExtra(e, name, largest) {
+			prefix, n := splitPartPrefix(name)
+			set, inSet := sets[strings.ToLower(prefix)]
+			inSet = inSet && n > 0
+			if isExtra(e, name, largest, inSet) {
 				extras = append(extras, Member{Path: e.Path, Role: RoleExtra})
 				continue
 			}
 			base, part := splitPart(name)
+			if inSet && set.varying {
+				base = prefix // the titles after the marker differ: group by what precedes it
+			}
 			// The key is lowercased so that filenames differing only by case
 			// group into the same version. This relies on the target
 			// filesystem (exFAT/NTFS/APFS) treating case-only-differing
@@ -235,14 +242,21 @@ func largestVersion(versions []*Version) *Version {
 	return best
 }
 
-func isExtra(e Entry, name string, largest int64) bool {
+// markedExtra is true for what the name or the folder says is an extra.
+func markedExtra(e Entry, name string) bool {
 	if extraDirs[strings.ToLower(path.Base(path.Dir(e.Path)))] {
 		return true
 	}
-	if extraRe.MatchString(name) {
+	return extraRe.MatchString(name)
+}
+
+// isExtra also treats a video under 15% of the largest one as an extra,
+// unless it is known to be a part of a multi-part film (sized).
+func isExtra(e Entry, name string, largest int64, sized bool) bool {
+	if markedExtra(e, name) {
 		return true
 	}
-	return largest > 0 && e.Size*100 < largest*15
+	return !sized && largest > 0 && e.Size*100 < largest*15
 }
 
 // splitPart removes a part marker ("CD1", "Part 2", "Disc 1") from name.
@@ -253,6 +267,75 @@ func splitPart(name string) (string, int) {
 	}
 	n, _ := strconv.Atoi(name[loc[2]:loc[3]])
 	return strings.TrimSpace(name[:loc[0]] + name[loc[1]:]), n
+}
+
+// splitPartPrefix returns the text before the part marker of name (without
+// the separators that lead into it) and the part number; 0 when there is no
+// marker.
+func splitPartPrefix(name string) (string, int) {
+	loc := partRe.FindStringSubmatchIndex(name)
+	if loc == nil {
+		return name, 0
+	}
+	n, _ := strconv.Atoi(name[loc[2]:loc[3]])
+	return strings.TrimSpace(name[:loc[0]]), n
+}
+
+// partSet describes videos of one folder that are the parts of one film:
+// the same text before the part marker and different part numbers.
+type partSet struct {
+	// varying: the names differ after the marker ("Shoah - Part 1 -
+	// Auschwitz"), so the text before it is what groups them.
+	varying bool
+}
+
+// partSets finds the part sets of a folder, by lowercase prefix. A prefix
+// needs at least two part numbers and none repeated: a repeated number means
+// several rips of the same film side by side, which stay separate versions.
+func partSets(es []Entry) map[string]partSet {
+	type seen struct {
+		parts map[int]int
+		bases map[string]bool
+	}
+	found := map[string]*seen{}
+	for _, e := range es {
+		if e.Kind != mediafile.Video {
+			continue
+		}
+		name := stem(e.Path)
+		if markedExtra(e, name) {
+			continue
+		}
+		prefix, part := splitPartPrefix(name)
+		if part == 0 || prefix == "" {
+			continue
+		}
+		k := strings.ToLower(prefix)
+		s := found[k]
+		if s == nil {
+			s = &seen{parts: map[int]int{}, bases: map[string]bool{}}
+			found[k] = s
+		}
+		base, _ := splitPart(name)
+		s.parts[part]++
+		s.bases[strings.ToLower(base)] = true
+	}
+	out := map[string]partSet{}
+	for k, s := range found {
+		if len(s.parts) < 2 {
+			continue
+		}
+		repeated := false
+		for _, n := range s.parts {
+			if n > 1 {
+				repeated = true
+			}
+		}
+		if !repeated {
+			out[k] = partSet{varying: len(s.bases) > 1}
+		}
+	}
+	return out
 }
 
 func subtitleOwner(sub string, versions []*Version, keys map[*Version]string) *Version {

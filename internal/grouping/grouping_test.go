@@ -182,3 +182,81 @@ func TestSplitPart(t *testing.T) {
 		}
 	}
 }
+
+func TestPartsWithDifferentTitlesAfterMarkerGroup(t *testing.T) {
+	dir := "../cine-ordenar/Shoah (1985)"
+	vs := Build([]Entry{
+		{dir + "/Shoah - Part 1 - Auschwitz.mkv", 5_000_000_000, mediafile.Video},
+		{dir + "/Shoah - Part 2 - Treblinka.mkv", 4_000_000_000, mediafile.Video},
+		{dir + "/Shoah - Part 3 - Sobibor.mkv", 3_000_000_000, mediafile.Video},
+		{dir + "/Shoah - Part 4 - Coda.mkv", 100_000_000, mediafile.Video}, // <15% del mayor: no es un extra
+		{dir + "/Shoah - Part 2 - Treblinka.es.srt", 50_000, mediafile.Subtitle},
+	}, roots)
+	v := only(t, vs)
+	if v.Parts != 4 || v.Parsed.Title != "Shoah" || v.Size != 12_100_000_000 {
+		t.Fatalf("got parts=%d title=%q size=%d", v.Parts, v.Parsed.Title, v.Size)
+	}
+	var parts []int
+	for _, m := range v.Members {
+		if m.Role == RoleExtra {
+			t.Fatalf("a part became an extra: %+v", m)
+		}
+		if m.Role == RoleMain {
+			parts = append(parts, m.Part)
+		}
+	}
+	if !reflect.DeepEqual(parts, []int{1, 2, 3, 4}) {
+		t.Fatalf("parts %v", parts)
+	}
+	if got := v.SubLangs(); !reflect.DeepEqual(got, []string{"es"}) {
+		t.Fatalf("sub langs %v", got)
+	}
+}
+
+func TestLonePartWithSuffixDoesNotGroup(t *testing.T) {
+	dir := "../cine-ordenar"
+	vs := Build([]Entry{
+		{dir + "/Movie - Part 1 - Subtitle.mkv", 1_000_000_000, mediafile.Video},
+		{dir + "/Other.mkv", 1_000_000_000, mediafile.Video},
+	}, roots)
+	if len(vs) != 2 || vs[0].Parts != 1 || vs[1].Parts != 1 {
+		t.Fatalf("got %+v", vs)
+	}
+}
+
+// Two rips of the same two-disc film in one folder are two versions, not
+// four parts.
+func TestRepeatedPartNumbersKeepSeparateVersions(t *testing.T) {
+	dir := "../cine-ordenar/Movie"
+	vs := Build([]Entry{
+		{dir + "/Movie.CD1.720p.avi", 700_000_000, mediafile.Video},
+		{dir + "/Movie.CD2.720p.avi", 700_000_000, mediafile.Video},
+		{dir + "/Movie.CD1.1080p.avi", 700_000_000, mediafile.Video},
+		{dir + "/Movie.CD2.1080p.avi", 700_000_000, mediafile.Video},
+	}, roots)
+	if len(vs) != 2 || vs[0].Parts != 2 || vs[1].Parts != 2 {
+		t.Fatalf("got %+v", vs)
+	}
+}
+
+func TestSameNamePartsAreNotExtrasBySize(t *testing.T) {
+	dir := "../cine-ordenar/Movie"
+	v := only(t, Build([]Entry{
+		{dir + "/Movie - CD1.avi", 1_000_000_000, mediafile.Video},
+		{dir + "/Movie - CD2.avi", 50_000_000, mediafile.Video},
+	}, roots))
+	if v.Parts != 2 {
+		t.Fatalf("parts %d, members %+v", v.Parts, v.Members)
+	}
+}
+
+func TestMarkedExtrasDoNotFormPartSets(t *testing.T) {
+	dir := "../cine-ordenar/Movie"
+	v := only(t, Build([]Entry{
+		{dir + "/Movie - Part 1 - Main.mkv", 1_000_000_000, mediafile.Video},
+		{dir + "/Movie - Part 2 - Making of.mkv", 900_000_000, mediafile.Video},
+	}, roots))
+	if v.Parts != 1 {
+		t.Fatalf("parts %d, members %+v", v.Parts, v.Members)
+	}
+}
