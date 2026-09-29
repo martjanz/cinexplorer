@@ -26,6 +26,7 @@ type Store struct {
 	hasMedia     bool
 	hasIdentity  bool
 	hasPartLinks bool
+	hasLists     bool // lists, list_entries, collection_folders and collection_seen
 	// hasFirstSeen is false for a catalog from before files.first_seen
 	// opened read-only.
 	hasFirstSeen bool
@@ -140,7 +141,7 @@ func openDB(dsn string, migrate bool) (*Store, error) {
 		}
 	}
 	s := &Store{db: db}
-	for name, dst := range map[string]*bool{"media": &s.hasMedia, "identifications": &s.hasIdentity, "part_links": &s.hasPartLinks} {
+	for name, dst := range map[string]*bool{"media": &s.hasMedia, "identifications": &s.hasIdentity, "part_links": &s.hasPartLinks, "lists": &s.hasLists} {
 		if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(dst); err != nil {
 			db.Close()
 			return nil, err

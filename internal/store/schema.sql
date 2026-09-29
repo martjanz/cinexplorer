@@ -100,3 +100,34 @@ CREATE TABLE IF NOT EXISTS part_links (
   leader      TEXT    NOT NULL,
   created_at  INTEGER NOT NULL          -- unix milliseconds
 );
+
+-- The user's lists. Rescans never touch them.
+CREATE TABLE IF NOT EXISTS lists (
+  id         INTEGER PRIMARY KEY,
+  name       TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+  created_at INTEGER NOT NULL,          -- unix milliseconds
+  updated_at INTEGER NOT NULL           -- last rename or change of entries
+);
+
+-- What each list holds: "movie:<tmdb id>" or "fp:<fingerprint>".
+CREATE TABLE IF NOT EXISTS list_entries (
+  list_id  INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+  ref      TEXT    NOT NULL,
+  added_at INTEGER NOT NULL,            -- unix milliseconds
+  PRIMARY KEY (list_id, ref)
+);
+
+-- Folders of Collections/ the user decided on.
+CREATE TABLE IF NOT EXISTS collection_folders (
+  path       TEXT    PRIMARY KEY,       -- relative to the app dir, '/'-separated
+  status     TEXT    NOT NULL,          -- imported | dismissed
+  list_id    INTEGER REFERENCES lists(id) ON DELETE SET NULL,
+  decided_at INTEGER NOT NULL           -- unix milliseconds
+);
+
+-- Contents of each folder already offered (imported or dismissed).
+CREATE TABLE IF NOT EXISTS collection_seen (
+  path        TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  PRIMARY KEY (path, fingerprint)
+);
