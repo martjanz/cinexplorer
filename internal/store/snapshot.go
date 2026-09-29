@@ -7,6 +7,7 @@ type Snapshot struct {
 	Identifications map[string]*Identification // by fingerprint
 	Movies          map[int]Movie              // by TMDB id
 	Lists           []List                     // by id, entries oldest first
+	CollectionFolders map[string]CollectionDecision // by folder path
 	// Changes counts the rows written through the catalog's connection
 	// since it was opened: it differs between two snapshots when the
 	// catalog changed in between (it restarts if the connection does).
@@ -36,7 +37,8 @@ func (s *Store) Changes() (int64, error) {
 
 // Snapshot reads versions, identifications and movies in one transaction.
 func (s *Store) Snapshot() (Snapshot, error) {
-	snap := Snapshot{Identifications: map[string]*Identification{}, Movies: map[int]Movie{}, Lists: []List{}}
+	snap := Snapshot{Identifications: map[string]*Identification{}, Movies: map[int]Movie{}, Lists: []List{},
+		CollectionFolders: map[string]CollectionDecision{}}
 	err := s.read(func(tx querier) error {
 		if err := tx.QueryRow(`SELECT total_changes()`).Scan(&snap.Changes); err != nil {
 			return err
@@ -47,6 +49,9 @@ func (s *Store) Snapshot() (Snapshot, error) {
 		}
 		snap.Versions = vs
 		if snap.Lists, err = s.lists(tx); err != nil {
+			return err
+		}
+		if snap.CollectionFolders, err = s.collectionDecisions(tx); err != nil {
 			return err
 		}
 		if !s.hasIdentity {
