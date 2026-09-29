@@ -48,6 +48,8 @@ type Item struct {
 	multiVersion bool   // two or more different contents
 	identical    bool   // the same content in two or more places
 	norm         string // title as compared when sorting
+	lists        []inList
+	listAdded    int64 // when it was added to the list being sorted by (SortQuery)
 }
 
 // entry is an item with the versions it stands for.
@@ -93,6 +95,7 @@ func build(snap store.Snapshot, roots []string) []*entry {
 	for _, e := range out {
 		e.finish(roots)
 	}
+	attachLists(out, snap.Lists)
 	return out
 }
 

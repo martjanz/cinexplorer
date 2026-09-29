@@ -32,6 +32,7 @@ type MovieDetail struct {
 	Versions      []VersionCard `json:"versions"`
 	Extras        []ExtraFile   `json:"extras"`
 	ExtraVersions []VersionCard `json:"extraVersions"` // versions corrected as extras of this movie
+	Lists         []ListRef     `json:"lists"`        // the lists that hold it
 }
 
 // Movie returns the page of a stored movie: its versions (the best first,
@@ -63,6 +64,7 @@ func Movie(snap store.Snapshot, id int) (MovieDetail, bool) {
 			d.ExtraVersions = append(d.ExtraVersions, VersionCard{VersionView: *v, Copies: copies[v.Fingerprint]})
 		}
 	}
+	d.Lists = listsOf(snap, store.RefMovie(id)) // a movie item's id is its RefMovie
 	sortCards(d.Versions)
 	return d, true
 }
@@ -120,6 +122,7 @@ type VersionDetail struct {
 	Versions       []VersionCard   `json:"versions"`
 	Identification *IdentityView   `json:"identification"` // nil when never identified
 	Movie          *store.MovieRef `json:"movie"`          // set when identified as a stored movie
+	Lists          []ListRef       `json:"lists"`          // the lists that hold it
 }
 
 // Version returns the page of a version key (see VersionKey).
@@ -139,6 +142,7 @@ func Version(snap store.Snapshot, key string) (VersionDetail, bool) {
 	if len(d.Versions) == 0 {
 		return d, false
 	}
+	d.Lists = listsOf(snap, key)
 	sortCards(d.Versions)
 	if id := snap.Identifications[d.Versions[0].Fingerprint]; id != nil && d.Versions[0].Fingerprint != "" {
 		cands := id.Candidates
