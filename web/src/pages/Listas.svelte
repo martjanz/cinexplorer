@@ -3,6 +3,11 @@
   import { app, notify } from '../lib/app.svelte.js'
   import { checkName, movieCount } from '../lib/listas.js'
 
+  // focus: autofocus is ignored when the input shows up from a button click.
+  function focus(node) {
+    node.focus()
+  }
+
   let cards = $state(null)
   let creating = $state(false)
   let name = $state('')
@@ -80,8 +85,7 @@
   {#if !readOnly}
     {#if creating}
       <form onsubmit={create}>
-        <!-- svelte-ignore a11y_autofocus -->
-        <input bind:value={name} placeholder="Nombre de la lista" maxlength="100" autofocus />
+        <input bind:value={name} placeholder="Nombre de la lista" maxlength="100" use:focus />
         <button class="primary" type="submit">Crear</button>
         <button type="button" onclick={() => ((creating = false), (name = ''))}>Cancelar</button>
       </form>
@@ -109,8 +113,7 @@
           </a>
           {#if renaming === l.id}
             <form class="rename" onsubmit={(e) => rename(e, l.id)}>
-              <!-- svelte-ignore a11y_autofocus -->
-              <input bind:value={newName} maxlength="100" aria-label="Nuevo nombre" autofocus />
+              <input bind:value={newName} maxlength="100" aria-label="Nuevo nombre" use:focus />
               <button class="primary" type="submit">Guardar</button>
               <button type="button" onclick={() => (renaming = null)}>Cancelar</button>
             </form>

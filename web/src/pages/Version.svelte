@@ -62,7 +62,7 @@
       {/if}
     </div>
   </section>
-  {#if !key.startsWith('id:')}
+  {#if !key.startsWith('id:') && !d.movie && !['extra', 'ignored'].includes(d.identification?.status)}
     <ChipsListas lists={d.lists} item={{ kind: 'version', key }} onchanged={load} />
   {/if}
 

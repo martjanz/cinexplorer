@@ -30,13 +30,20 @@
     }
   }
 
-  async function toggle(l) {
+  // focus: autofocus is ignored when the menu opens from a button click.
+  function focus(node) {
+    node.focus()
+  }
+
+  async function toggle(l, event) {
     if (busy) return
     busy = true
+    const checkbox = event.currentTarget
     try {
       await (member.has(l.id) ? api.removeFromList(l.id, item) : api.addToList(l.id, item))
       onchanged()
     } catch (e) {
+      checkbox.checked = member.has(l.id)
       notify(e.message)
     } finally {
       busy = false
@@ -47,14 +54,18 @@
     event.preventDefault()
     if (busy || !canCreate) return
     busy = true
+    let created = false
     try {
       const l = await api.createList(q.trim())
+      created = true
       await api.addToList(l.id, item)
       all = [...all, l]
       q = ''
       onchanged()
     } catch (e) {
       notify(e.message)
+      // The list exists even if adding to it failed: a retry must see it.
+      if (created) all = await api.lists().catch(() => all)
     } finally {
       busy = false
     }
@@ -78,14 +89,13 @@
     {#if open}
       <div class="menu">
         <form onsubmit={create}>
-          <!-- svelte-ignore a11y_autofocus -->
-          <input type="search" bind:value={q} placeholder="Buscar o crear una lista…" maxlength="100" autofocus />
+          <input type="search" bind:value={q} placeholder="Buscar o crear una lista…" maxlength="100" use:focus />
         </form>
         <ul>
           {#each shown as l (l.id)}
             <li>
               <label>
-                <input type="checkbox" checked={member.has(l.id)} disabled={busy} onchange={() => toggle(l)} />
+                <input type="checkbox" checked={member.has(l.id)} disabled={busy} onchange={(e) => toggle(l, e)} />
                 {l.name}
               </label>
             </li>
