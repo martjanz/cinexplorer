@@ -48,8 +48,9 @@ func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Fingerprint string `json:"fingerprint"`
-		Action      string `json:"action"` // movie | extra | ignore | reset
+		Action      string `json:"action"` // movie | extra | ignore | reset | part-of | unlink
 		TMDBID      int    `json:"tmdbId"`
+		Leader      string `json:"leader"` // part-of: fingerprint of the version this one is a part of
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "JSON inválido", http.StatusBadRequest)
@@ -88,11 +89,24 @@ func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 		if err = s.Store.ResetIdentification(req.Fingerprint); err == nil {
 			runner.Trigger()
 		}
+	case "part-of":
+		if req.Leader == "" {
+			http.Error(w, store.ErrUnknownFingerprint.Error(), http.StatusNotFound)
+			return
+		}
+		err = s.Store.SetPartLink(req.Fingerprint, req.Leader)
+	case "unlink":
+		var n int
+		if n, err = s.Store.Unlink(req.Fingerprint); err == nil && n > 0 {
+			s.rt().Scan() // the next scan rebuilds the versions apart
+		}
 	default:
 		http.Error(w, "acción desconocida", http.StatusBadRequest)
 		return
 	}
 	switch {
+	case errors.Is(err, store.ErrPartLink):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, store.ErrUnknownFingerprint):
 		http.Error(w, err.Error(), http.StatusNotFound)
 	case err != nil:

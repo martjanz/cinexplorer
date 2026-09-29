@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"cinexplorer/internal/grouping"
 	"cinexplorer/internal/identify"
 	"cinexplorer/internal/images"
+	"cinexplorer/internal/nameparse"
 	"cinexplorer/internal/store"
 	"cinexplorer/internal/tmdb"
 )
@@ -237,5 +239,67 @@ func TestCrossSiteRequestsRejected(t *testing.T) {
 	rec := get("/api/versions", "same-origin", "cors")
 	if rec.Code != 200 || rec.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
 		t.Errorf("same origin: %d %q", rec.Code, rec.Header().Get("Cross-Origin-Resource-Policy"))
+	}
+}
+
+// twoFilmsServer adds a second version, Shoah 2 (fingerprint f2), next to Amarcord (f1).
+func twoFilmsServer(t *testing.T) *Server {
+	t.Helper()
+	s, _ := identifyServer(t)
+	const p = "../otra/Shoah 2.mkv"
+	if err := s.Store.SyncFiles([]store.FileRow{{Path: p, Size: 5, MTime: 1, Fingerprint: "f2", Kind: "video"}}, []string{"../otra"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Store.ReplaceVersionsIn([]grouping.Version{{
+		Dir: "../otra", Parsed: nameparse.Parsed{Title: "Shoah 2"}, Size: 5, Parts: 1,
+		Members: []grouping.Member{{Path: p, Role: grouping.RoleMain}},
+	}}, []string{"../otra"}, []string{"../cine", "../otra"}); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestIdentifyPartOfAndUnlink(t *testing.T) {
+	s := twoFilmsServer(t)
+	if code := post(t, s, `{"fingerprint":"f2","action":"part-of","leader":"f1"}`); code != http.StatusNoContent {
+		t.Fatalf("part-of: status %d", code)
+	}
+	rec := request(s.Handler(), "GET", "/api/versions", "", "", "127.0.0.1")
+	var vs []store.VersionView
+	json.Unmarshal(rec.Body.Bytes(), &vs)
+	if len(vs) != 1 || vs[0].Parts != 2 || !vs[0].PartLinked {
+		t.Fatalf("versions %s", rec.Body)
+	}
+	if code := post(t, s, `{"fingerprint":"f1","action":"unlink"}`); code != http.StatusNoContent {
+		t.Fatalf("unlink: status %d", code)
+	}
+	if n, _ := s.Store.Unlink("f1"); n != 0 { // the first unlink already removed it
+		t.Fatalf("link left: %d", n)
+	}
+}
+
+func TestIdentifyPartOfErrors(t *testing.T) {
+	s := twoFilmsServer(t)
+	cases := []struct {
+		body string
+		want int
+	}{
+		{`{"fingerprint":"f2","action":"part-of","leader":"zz"}`, http.StatusNotFound}, // unknown leader
+		{`{"fingerprint":"zz","action":"part-of","leader":"f1"}`, http.StatusNotFound}, // unknown follower
+		{`{"fingerprint":"f1","action":"part-of","leader":"f1"}`, http.StatusBadRequest},
+		{`{"fingerprint":"f1","action":"part-of"}`, http.StatusNotFound}, // no leader
+	}
+	for _, c := range cases {
+		if code := post(t, s, c.body); code != c.want {
+			t.Errorf("%s: status %d, want %d", c.body, code, c.want)
+		}
+	}
+}
+
+func TestIdentifyPartOfReadOnly(t *testing.T) {
+	s := twoFilmsServer(t)
+	s.ReadOnly = true
+	if code := post(t, s, `{"fingerprint":"f2","action":"part-of","leader":"f1"}`); code != http.StatusConflict {
+		t.Fatalf("status %d", code)
 	}
 }
