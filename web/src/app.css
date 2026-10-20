@@ -16,7 +16,8 @@
   --same-bg: #4d3a14;
   --warn: #e0a040;
   --radius: 4px;
-  --gutter: 16px;
+  --gutter: clamp(16px, 2.5vw, 48px);
+  --page-max: 2560px;
   color-scheme: dark;
   font-family: 'Inter Variable', system-ui, sans-serif;
   font-size: 15px;
@@ -92,7 +93,7 @@ input::placeholder {
 }
 
 main {
-  max-width: 1400px;
+  max-width: var(--page-max);
   margin: 0 auto;
   padding: 0 var(--gutter) 48px;
 }
