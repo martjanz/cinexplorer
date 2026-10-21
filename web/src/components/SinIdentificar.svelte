@@ -110,7 +110,7 @@
             <span class="rname">{fileName(f?.path)}<span class="path">{f?.path}</span></span>
             <span class="best">
               {it.candidates.length
-                ? `${it.candidates.length} ${it.candidates.length === 1 ? 'candidato' : 'candidatos'} · mejor ${percent(it.candidates[0].score)}`
+                ? `${it.candidates.length} ${it.candidates.length === 1 ? 'candidato' : 'candidatos'} · mejor ${percent(Math.max(...it.candidates.map((c) => c.score)))}`
                 : 'sin candidatos'}
             </span>
           </button>
