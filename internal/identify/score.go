@@ -79,3 +79,21 @@ func directorMatches(parsed string, directors []string) bool {
 	}
 	return false
 }
+
+// surnameMatches is the strict check for guessed directors (alternative
+// readings): the last word of the guess must be the last word of one of the
+// candidate's directors, so a guessed "G Salvatore" does not confirm a
+// director whose first name is Salvatore.
+func surnameMatches(parsed string, directors []string) bool {
+	words := quality.Words(parsed)
+	if len(words) == 0 {
+		return false
+	}
+	last := words[len(words)-1]
+	for _, d := range directors {
+		if dw := quality.Words(d); len(dw) > 0 && dw[len(dw)-1] == last {
+			return true
+		}
+	}
+	return false
+}

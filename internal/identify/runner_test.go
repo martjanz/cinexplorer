@@ -14,6 +14,7 @@ import (
 	"cinexplorer/internal/httpx"
 	"cinexplorer/internal/images"
 	"cinexplorer/internal/nameparse"
+	"cinexplorer/internal/probe"
 	"cinexplorer/internal/store"
 	"cinexplorer/internal/tmdb"
 	"cinexplorer/internal/wikidata"
@@ -439,5 +440,31 @@ func TestCloseStopsBackgroundRuns(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if r.busy() || current(t, r.Store, "a1") != nil {
 		t.Fatal("Trigger ran after Close")
+	}
+}
+
+func TestRunnerPassesRuntime(t *testing.T) {
+	r, api, _ := fixture(t)
+	p := phoenixAPI()
+	api.search["Phoenix|2014|es-ES"] = p.search["Phoenix|2014|es-ES"]
+	api.movies["1525682|es-ES"], api.movies["254578|es-ES"] = p.movies["1525682|es-ES"], p.movies["254578|es-ES"]
+	dir := "../cine/p"
+	r.Store.SyncFiles([]store.FileRow{{Path: dir + "/Phoenix (2014).mkv", Size: 700, MTime: 1, Fingerprint: "ph", Kind: "video"}}, []string{"../cine"})
+	r.Store.ReplaceVersions([]grouping.Version{{Dir: dir, Parsed: nameparse.Parsed{Title: "Phoenix", Year: 2014},
+		Size: 700, Parts: 1, Members: []grouping.Member{{Path: dir + "/Phoenix (2014).mkv", Role: grouping.RoleMain}}}})
+	pending, err := r.Store.PendingProbes(store.ProbeEnv{})
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending %v %v", pending, err)
+	}
+	if err := r.Store.SaveProbes([]store.ProbeResult{{FileID: pending[0].FileID, Size: pending[0].Size, MTime: pending[0].MTime,
+		Info: probe.Info{DurationMs: 97 * 60000}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	id := current(t, r.Store, "ph")
+	if id.Status != store.StatusUnmatched || id.Candidates[0].TMDBID != 254578 {
+		t.Fatalf("phoenix %+v", id)
 	}
 }

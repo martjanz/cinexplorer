@@ -257,7 +257,8 @@ func (r *Runner) identifyAll(ctx context.Context, fetched map[int]tmdb.Details) 
 	}
 	var jobs []job
 	for _, t := range targets {
-		q := Query{Title: t.Title, Year: t.Year, Director: t.Director, IMDbID: t.IMDbID}
+		runtime := int((t.DurationMs + 30000) / 60000)
+		q := Query{Title: t.Title, Year: t.Year, Runtime: runtime, Director: t.Director, IMDbID: t.IMDbID}
 		if id := imdbFromNFOs(r.AppDir, t.NFOs); id != "" {
 			q.IMDbID = id
 		}
@@ -265,7 +266,7 @@ func (r *Runner) identifyAll(ctx context.Context, fetched map[int]tmdb.Details) 
 		// the file names do not: several versions in one folder keep their
 		// own, often poorer, names.
 		if f := nameparse.Parse(path.Base(t.Dir)); f.Year > 0 && (f.Title != q.Title || f.Year != q.Year) {
-			q.Folder = &Query{Title: f.Title, Year: f.Year, Director: f.Director}
+			q.Folder = &Query{Title: f.Title, Year: f.Year, Runtime: runtime, Director: f.Director}
 		}
 		if needsMatch(t.Current, q, r.Language) {
 			jobs = append(jobs, job{t.Fingerprint, q})

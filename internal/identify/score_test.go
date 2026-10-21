@@ -60,3 +60,19 @@ func TestDirectorMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestSurnameMatches(t *testing.T) {
+	dirs := []string{"Maurice Pialat"}
+	if !surnameMatches("Pialat", dirs) {
+		t.Error("the surname must confirm the director")
+	}
+	if surnameMatches("Maurice", dirs) {
+		t.Error("a first name must not confirm the director")
+	}
+	if !surnameMatches("M. Pialat", dirs) {
+		t.Error("the last word is what counts")
+	}
+	if surnameMatches("", dirs) {
+		t.Error("an empty director confirms nothing")
+	}
+}

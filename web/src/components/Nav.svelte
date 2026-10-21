@@ -46,7 +46,7 @@
     margin-bottom: 16px;
   }
   nav {
-    max-width: 1400px;
+    max-width: var(--page-max);
     margin: 0 auto;
     padding: 12px var(--gutter);
     display: flex;
