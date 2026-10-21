@@ -109,7 +109,7 @@ func searchScored(ctx context.Context, api API, lang string, q Query, alt bool, 
 		if len(rs) > 0 {
 			c := candidate(rs[0])
 			c.Score = 1
-			return []scored{{Candidate: c, alt: alt, confirmed: alt}}, nil
+			return []scored{{Candidate: c, alt: alt}}, nil
 		}
 	}
 	variants := titleVariants(q.Title)
@@ -165,7 +165,11 @@ func searchScored(ctx context.Context, api API, lang string, q Query, alt bool, 
 			for _, p := range d.Directors() {
 				names = append(names, p.Name)
 			}
-			if directorMatches(q.Director, names) {
+			matches := directorMatches
+			if alt {
+				matches = surnameMatches
+			}
+			if matches(q.Director, names) {
 				cands[i].Score += directorWeight
 				cands[i].confirmed = true
 			}
@@ -257,7 +261,7 @@ func identify(ctx context.Context, api API, lang string, q Query) (store.Identif
 				return store.Identification{}, nil, err
 			}
 			if err != nil {
-				log.Printf("lectura %q: %v", r.Title, err)
+				log.Printf("no se pudo buscar la lectura %q: %v", r.Title, err)
 				continue
 			}
 			cands = pool(cands, more)
