@@ -273,8 +273,54 @@ func identify(ctx context.Context, api API, lang string, q Query) (store.Identif
 		}
 		id.Confidence = cands[0].Score
 	}
+	if !assignable(cands) && q.Runtime > 0 {
+		if err := orderByRuntime(ctx, api, lang, q.Runtime, cands, details); err != nil {
+			return store.Identification{}, nil, err
+		}
+	}
 	id.Candidates = scores(cands[:min(keptCandidates, len(cands))])
 	return id, details, nil
+}
+
+// orderByRuntime moves, among the candidates kept for review, those whose
+// runtime fits the version's (minutes) to the front, keeping the order
+// otherwise. A candidate whose details TMDB cannot give does not match.
+func orderByRuntime(ctx context.Context, api API, lang string, minutes int, cands []scored, details map[int]tmdb.Details) error {
+	top := cands[:min(keptCandidates, len(cands))]
+	fits := make(map[int]bool, len(top))
+	for _, c := range top {
+		d, ok := details[c.TMDBID]
+		if !ok {
+			var err error
+			d, err = api.Movie(ctx, c.TMDBID, lang)
+			if fatal(err) {
+				return err
+			}
+			if err != nil {
+				continue
+			}
+			details[d.ID] = d
+		}
+		fits[c.TMDBID] = runtimeMatches(d.Runtime, minutes)
+	}
+	sort.SliceStable(top, func(i, j int) bool { return fits[top[i].TMDBID] && !fits[top[j].TMDBID] })
+	return nil
+}
+
+// runtimeMatches reports whether a movie's runtime is close to a version's:
+// within 5 minutes or 8 %, whichever is larger.
+func runtimeMatches(runtime, minutes int) bool {
+	if runtime <= 0 {
+		return false
+	}
+	return abs(runtime-minutes) <= max(5, minutes*8/100)
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // fallbackLang is the language of the second search and of missing texts.

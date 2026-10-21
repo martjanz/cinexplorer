@@ -50,6 +50,7 @@ type IdentifyTarget struct {
 	Year        int
 	Director    string
 	IMDbID      string          // from the file or folder name
+	DurationMs  int64           // of the version (see versionDurations); 0 when unknown
 	NFOs        []string        // present .nfo files in Dir (catalog paths, sorted)
 	Current     *Identification // nil when never identified
 }
@@ -177,6 +178,10 @@ func (s *Store) IdentifyTargets() ([]IdentifyTarget, error) {
 	if err != nil {
 		return nil, err
 	}
+	durations, err := s.versionDurations(tx)
+	if err != nil {
+		return nil, err
+	}
 	nfos := map[string][]string{}
 	nrows, err := tx.Query(`SELECT path FROM files WHERE kind = 'info' AND missing = 0 ORDER BY path`)
 	if err != nil {
@@ -227,6 +232,7 @@ func (s *Store) IdentifyTargets() ([]IdentifyTarget, error) {
 		seen[rep.fingerprint] = true
 		t := v.t
 		t.Fingerprint, t.Current = rep.fingerprint, current[rep.fingerprint]
+		t.DurationMs = durations[v.id]
 		t.NFOs = nfosFor(nfos[t.Dir], perDir[t.Dir] > 1, rep.path)
 		out = append(out, t)
 	}

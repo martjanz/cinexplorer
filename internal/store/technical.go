@@ -25,36 +25,8 @@ func (s *Store) attachMedia(tx querier, out []VersionView, pos map[int64]int) er
 	if !s.hasMedia {
 		return nil
 	}
-	rows, err := tx.Query(`SELECT f.version_id, f.kind, m.duration_ms, m.width, m.height, m.video_codec, m.audio, m.subs
-		FROM files f JOIN media m ON m.file_id = f.id
-		WHERE f.version_id IS NOT NULL AND f.role = 'main' AND f.missing = 0 AND m.error = ''
-		  AND m.size = f.size AND m.mtime = f.mtime
-		ORDER BY f.version_id, f.part, f.path`)
+	byVersion, order, err := mediaByVersion(tx)
 	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	byVersion := map[int64][]mediaRow{}
-	var order []int64
-	for rows.Next() {
-		var id int64
-		var m mediaRow
-		var audio, subs string
-		if err := rows.Scan(&id, &m.kind, &m.durationMs, &m.width, &m.height, &m.videoCodec, &audio, &subs); err != nil {
-			return err
-		}
-		if err := json.Unmarshal([]byte(audio), &m.audio); err != nil {
-			return err
-		}
-		if err := json.Unmarshal([]byte(subs), &m.subs); err != nil {
-			return err
-		}
-		if _, seen := byVersion[id]; !seen {
-			order = append(order, id)
-		}
-		byVersion[id] = append(byVersion[id], m)
-	}
-	if err := rows.Err(); err != nil {
 		return err
 	}
 	for _, id := range order {
@@ -65,18 +37,81 @@ func (s *Store) attachMedia(tx querier, out []VersionView, pos map[int64]int) er
 	return nil
 }
 
-// applyMedia merges the probe results of a version's parts, in part order.
-func applyMedia(v *VersionView, ms []mediaRow) {
+// versionDurations returns each version's duration in ms (see mediaParts),
+// from the same probe results attachMedia uses. Versions without usable
+// results are absent.
+func (s *Store) versionDurations(tx querier) (map[int64]int64, error) {
+	out := map[int64]int64{}
+	if !s.hasMedia {
+		return out, nil
+	}
+	byVersion, _, err := mediaByVersion(tx)
+	if err != nil {
+		return nil, err
+	}
+	for id, ms := range byVersion {
+		var d int64
+		for _, m := range mediaParts(ms) {
+			d += m.durationMs
+		}
+		out[id] = d
+	}
+	return out, nil
+}
+
+// mediaByVersion loads the probe results of present main files whose probe is
+// current and valid, per version in part order, plus the versions' order.
+func mediaByVersion(tx querier) (map[int64][]mediaRow, []int64, error) {
+	rows, err := tx.Query(`SELECT f.version_id, f.kind, m.duration_ms, m.width, m.height, m.video_codec, m.audio, m.subs
+		FROM files f JOIN media m ON m.file_id = f.id
+		WHERE f.version_id IS NOT NULL AND f.role = 'main' AND f.missing = 0 AND m.error = ''
+		  AND m.size = f.size AND m.mtime = f.mtime
+		ORDER BY f.version_id, f.part, f.path`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	byVersion := map[int64][]mediaRow{}
+	var order []int64
+	for rows.Next() {
+		var id int64
+		var m mediaRow
+		var audio, subs string
+		if err := rows.Scan(&id, &m.kind, &m.durationMs, &m.width, &m.height, &m.videoCodec, &audio, &subs); err != nil {
+			return nil, nil, err
+		}
+		if err := json.Unmarshal([]byte(audio), &m.audio); err != nil {
+			return nil, nil, err
+		}
+		if err := json.Unmarshal([]byte(subs), &m.subs); err != nil {
+			return nil, nil, err
+		}
+		if _, seen := byVersion[id]; !seen {
+			order = append(order, id)
+		}
+		byVersion[id] = append(byVersion[id], m)
+	}
+	return byVersion, order, rows.Err()
+}
+
+// mediaParts returns the results that make up the movie: a DVD holds several
+// title sets and the longest one is the movie; otherwise all parts count.
+func mediaParts(ms []mediaRow) []mediaRow {
 	if ms[0].kind == "dvd" {
-		// A DVD holds several title sets; the longest one is the movie.
 		longest := ms[0]
 		for _, m := range ms[1:] {
 			if m.durationMs > longest.durationMs {
 				longest = m
 			}
 		}
-		ms = []mediaRow{longest}
+		return []mediaRow{longest}
 	}
+	return ms
+}
+
+// applyMedia merges the probe results of a version's parts, in part order.
+func applyMedia(v *VersionView, ms []mediaRow) {
+	ms = mediaParts(ms)
 	first := ms[0]
 	v.Width, v.Height, v.VideoCodec = first.width, first.height, first.videoCodec
 	for _, m := range ms {

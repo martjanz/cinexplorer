@@ -213,3 +213,71 @@ func TestReadingErrorSkipsReading(t *testing.T) {
 		t.Fatalf("got %+v", id)
 	}
 }
+
+func phoenixAPI() *fakeAPI {
+	d1, d2 := details(1525682, "Phoenix", "2014-10-01", ""), details(254578, "Phoenix", "2014-09-25", "")
+	d1.Runtime, d2.Runtime = 15, 98
+	return &fakeAPI{
+		search: map[string][]tmdb.Result{
+			"Phoenix|2014|es-ES": {
+				{ID: 1525682, Title: "Phoenix", ReleaseDate: "2014-10-01"},
+				{ID: 254578, Title: "Phoenix", ReleaseDate: "2014-09-25"},
+			},
+		},
+		movies: map[string]tmdb.Details{"1525682|es-ES": d1, "254578|es-ES": d2},
+	}
+}
+
+func TestRuntimeOrdersTies(t *testing.T) {
+	api := phoenixAPI()
+	id, _, err := Identify(context.Background(), api, "es-ES", Query{Title: "Phoenix", Year: 2014, Runtime: 97})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Status != store.StatusUnmatched || len(id.Candidates) != 2 || id.Candidates[0].TMDBID != 254578 {
+		t.Fatalf("got %+v", id)
+	}
+	if id.Confidence != 1 {
+		t.Fatalf("confidence %v", id.Confidence)
+	}
+
+	api = phoenixAPI()
+	id, _, err = Identify(context.Background(), api, "es-ES", Query{Title: "Phoenix", Year: 2014})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Candidates[0].TMDBID != 1525682 || api.called("movie ") != 0 {
+		t.Fatalf("without runtime: %+v, %d movie calls", id.Candidates, api.called("movie "))
+	}
+}
+
+func TestRuntimeMatches(t *testing.T) {
+	for _, c := range []struct {
+		runtime, minutes int
+		want             bool
+	}{{98, 97, true}, {103, 97, true}, {150, 140, true}, {15, 97, false}, {0, 97, false}} {
+		if got := runtimeMatches(c.runtime, c.minutes); got != c.want {
+			t.Errorf("runtimeMatches(%d, %d) = %v", c.runtime, c.minutes, got)
+		}
+	}
+}
+
+func TestRuntimeStepErrors(t *testing.T) {
+	// A removed movie just does not match; a fatal error is returned.
+	api := phoenixAPI()
+	delete(api.movies, "254578|es-ES")
+	id, _, err := Identify(context.Background(), api, "es-ES", Query{Title: "Phoenix", Year: 2014, Runtime: 97})
+	if err != nil || id.Candidates[0].TMDBID != 1525682 {
+		t.Fatalf("got %+v, %v", id, err)
+	}
+	if _, _, err := Identify(context.Background(), movieFails{phoenixAPI()}, "es-ES", Query{Title: "Phoenix", Year: 2014, Runtime: 97}); err == nil {
+		t.Fatal("fatal error swallowed")
+	}
+}
+
+// movieFails is a fakeAPI whose Movie fails with a fatal error.
+type movieFails struct{ *fakeAPI }
+
+func (movieFails) Movie(context.Context, int, string) (tmdb.Details, error) {
+	return tmdb.Details{}, tmdb.ErrUnauthorized
+}
