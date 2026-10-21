@@ -38,8 +38,9 @@ func (s *Store) attachMedia(tx querier, out []VersionView, pos map[int64]int) er
 }
 
 // versionDurations returns each version's duration in ms (see mediaParts),
-// from the same probe results attachMedia uses. Versions without usable
-// results are absent.
+// from the same probe results attachMedia uses. A version is present only
+// when every one of its present main files has a usable result: a partial sum
+// would make a multi-part film look short. Others are absent (unknown).
 func (s *Store) versionDurations(tx querier) (map[int64]int64, error) {
 	out := map[int64]int64{}
 	if !s.hasMedia {
@@ -49,7 +50,14 @@ func (s *Store) versionDurations(tx querier) (map[int64]int64, error) {
 	if err != nil {
 		return nil, err
 	}
+	present, err := presentMainFiles(tx)
+	if err != nil {
+		return nil, err
+	}
 	for id, ms := range byVersion {
+		if len(ms) != present[id] {
+			continue
+		}
 		var d int64
 		for _, m := range mediaParts(ms) {
 			d += m.durationMs
@@ -57,6 +65,26 @@ func (s *Store) versionDurations(tx querier) (map[int64]int64, error) {
 		out[id] = d
 	}
 	return out, nil
+}
+
+// presentMainFiles counts each version's present main files.
+func presentMainFiles(tx querier) (map[int64]int, error) {
+	rows, err := tx.Query(`SELECT version_id, COUNT(*) FROM files
+		WHERE version_id IS NOT NULL AND role = 'main' AND missing = 0 GROUP BY version_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
 }
 
 // mediaByVersion loads the probe results of present main files whose probe is

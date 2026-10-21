@@ -206,6 +206,8 @@ func TestIdentifyTargetsDuration(t *testing.T) {
 		{Path: "../cine/p/Dos CD2.avi", Size: 100, MTime: 1, Fingerprint: "p2", Kind: "video"},
 		{Path: "../cine/d/VIDEO_TS/VTS_01_0.IFO", Size: 10, MTime: 1, Fingerprint: "i1", Kind: "dvd"},
 		{Path: "../cine/d/VIDEO_TS/VTS_02_0.IFO", Size: 10, MTime: 1, Fingerprint: "i2", Kind: "dvd"},
+		{Path: "../cine/q/Parcial CD1.avi", Size: 100, MTime: 1, Fingerprint: "q1", Kind: "video"},
+		{Path: "../cine/q/Parcial CD2.avi", Size: 100, MTime: 1, Fingerprint: "q2", Kind: "video"},
 	}
 	if err := s.SyncFiles(files, roots); err != nil {
 		t.Fatal(err)
@@ -214,6 +216,9 @@ func TestIdentifyTargetsDuration(t *testing.T) {
 		return grouping.Member{Path: p, Role: grouping.RoleMain, Part: part}
 	}
 	if err := s.ReplaceVersions([]grouping.Version{
+		// One of its two parts has no probe: its duration is unknown, not 50 min.
+		{Dir: "../cine/q", Parsed: nameparse.Parsed{Title: "Parcial"}, Size: 200, Parts: 2,
+			Members: []grouping.Member{main("../cine/q/Parcial CD1.avi", 1), main("../cine/q/Parcial CD2.avi", 2)}},
 		{Dir: "../cine/s", Parsed: nameparse.Parsed{Title: "Solo"}, Size: 100, Parts: 1,
 			Members: []grouping.Member{main("../cine/s/Solo.mkv", 0)}},
 		{Dir: "../cine/p", Parsed: nameparse.Parsed{Title: "Dos"}, Size: 200, Parts: 2,
@@ -230,12 +235,16 @@ func TestIdentifyTargetsDuration(t *testing.T) {
 	dur := map[string]int64{
 		"../cine/s/Solo.mkv": 100 * min, "../cine/p/Dos CD1.avi": 50 * min, "../cine/p/Dos CD2.avi": 45 * min,
 		"../cine/d/VIDEO_TS/VTS_01_0.IFO": 5 * min, "../cine/d/VIDEO_TS/VTS_02_0.IFO": 110 * min,
+		"../cine/q/Parcial CD1.avi": 50 * min,
 	}
 	var rs []ProbeResult
 	for _, p := range pending {
+		if p.Path == "../cine/q/Parcial CD2.avi" {
+			continue
+		}
 		rs = append(rs, ProbeResult{FileID: p.FileID, Size: p.Size, MTime: p.MTime, Info: probe.Info{DurationMs: dur[p.Path]}})
 	}
-	if len(rs) != 5 {
+	if len(rs) != 6 {
 		t.Fatalf("pending %d", len(rs))
 	}
 	if err := s.SaveProbes(rs); err != nil {
@@ -249,7 +258,7 @@ func TestIdentifyTargetsDuration(t *testing.T) {
 	for _, x := range ts {
 		got[x.Title] = x.DurationMs
 	}
-	want := map[string]int64{"Solo": 100 * min, "Dos": 95 * min, "Dvd": 110 * min}
+	want := map[string]int64{"Solo": 100 * min, "Dos": 95 * min, "Dvd": 110 * min, "Parcial": 0}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
