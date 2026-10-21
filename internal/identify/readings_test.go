@@ -38,6 +38,35 @@ func TestReadings(t *testing.T) {
 		{Query{Title: "Sebastián Díaz", Director: "muerte y profanación 4 lonkos： Vida", Year: 2020}, []Query{
 			{Title: "muerte y profanación 4 lonkos： Vida", Director: "Sebastián Díaz", Year: 2020},
 		}},
+		// Every fitting unspaced dash is tried, left to right.
+		{Query{Title: "Jean-Luc Godard-A bout de souffle"}, []Query{
+			{Title: "Jean", Director: "Luc Godard-A bout de souffle"},
+			{Title: "Luc Godard-A bout de souffle", Director: "Jean"},
+			{Title: "Jean-Luc Godard", Director: "A bout de souffle"},
+			{Title: "A bout de souffle", Director: "Jean-Luc Godard"},
+		}},
+		{Query{Title: "Jean-Pierre Melville-Le samouraï"}, []Query{
+			{Title: "Jean", Director: "Pierre Melville-Le samouraï"},
+			{Title: "Pierre Melville-Le samouraï", Director: "Jean"},
+			{Title: "Jean-Pierre Melville", Director: "Le samouraï"},
+			{Title: "Le samouraï", Director: "Jean-Pierre Melville"},
+		}},
+		// Several spaced dashes: the first one wins.
+		{Query{Title: "A - B C - D E"}, []Query{
+			{Title: "A", Director: "B C - D E"},
+			{Title: "B C - D E", Director: "A"},
+		}},
+		// A dash whose readings are discarded still blocks trailing words.
+		{Query{Title: "300 - Rise of an Empire Smith"}, nil},
+		// Comma reading first, then the title and director crossed.
+		{Query{Title: "Melancholia, Lars Von Trier", Director: "Trier"}, []Query{
+			{Title: "Melancholia", Director: "Lars Von Trier"},
+			{Title: "Trier", Director: "Melancholia, Lars Von Trier"},
+		}},
+		// Identical readings are listed once.
+		{Query{Title: "Azor - Azor"}, []Query{{Title: "Azor", Director: "Azor"}}},
+		// A reading whose title is the query's own is dropped.
+		{Query{Title: "Foo", Director: "foo"}, nil},
 		{Query{Title: "Spider-Man"}, nil},
 		{Query{Title: "X-Men"}, nil},
 		{Query{Title: "Jean-Luc"}, nil},

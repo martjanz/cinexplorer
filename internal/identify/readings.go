@@ -39,13 +39,16 @@ func readings(q Query) []Query {
 
 	// A dash split point: the spaced one, or else the unspaced one between
 	// letters when its sides have a fitting number of words.
-	left, right, dash := splitSpaced(t)
-	if !dash {
-		left, right, dash = splitUnspaced(t)
+	var splits [][2]string
+	if left, right, ok := splitSpaced(t); ok {
+		splits = append(splits, [2]string{left, right})
+	} else {
+		splits = splitUnspaced(t)
 	}
-	if dash {
-		add(left, right)
-		add(right, left)
+	dash := len(splits) > 0
+	for _, sp := range splits {
+		add(sp[0], sp[1])
+		add(sp[1], sp[0])
 	}
 
 	// The last comma, when the right side is 1 to 4 words long.
@@ -88,19 +91,27 @@ func splitSpaced(t string) (left, right string, ok bool) {
 	return t[:best], t[best+sepLen:], true
 }
 
-// splitUnspaced splits at the first dash between two letters, when the left
-// side has 1 to 3 words and the right side 2 or more.
-func splitUnspaced(t string) (left, right string, ok bool) {
+// maxUnspacedSplits caps the unspaced dashes tried: each reading costs searches.
+const maxUnspacedSplits = 2
+
+// splitUnspaced splits at every dash between two letters whose left side has
+// 1 to 3 words and right side 2 or more, left to right, up to
+// maxUnspacedSplits: "Jean-Luc Godard-A bout de souffle" has two dashes and
+// only the second is the right one.
+func splitUnspaced(t string) [][2]string {
+	var out [][2]string
 	runes := []rune(t)
-	for i := 1; i < len(runes)-1; i++ {
+	for i := 1; i < len(runes)-1 && len(out) < maxUnspacedSplits; i++ {
 		if runes[i] != '-' || !unicode.IsLetter(runes[i-1]) || !unicode.IsLetter(runes[i+1]) {
 			continue
 		}
-		left, right = trimSide(string(runes[:i])), trimSide(string(runes[i+1:]))
+		left, right := trimSide(string(runes[:i])), trimSide(string(runes[i+1:]))
 		nl, nr := len(strings.Fields(left)), len(strings.Fields(right))
-		return left, right, nl >= 1 && nl <= 3 && nr >= 2
+		if nl >= 1 && nl <= 3 && nr >= 2 {
+			out = append(out, [2]string{left, right})
+		}
 	}
-	return "", "", false
+	return out
 }
 
 // trimSide trims the cutset from both ends.
