@@ -46,6 +46,7 @@ type API interface {
 type Query struct {
 	Title    string
 	Year     int
+	Runtime  int // minutes, 0 when unknown
 	Director string
 	IMDbID   string
 	// Folder is the parse of the version's folder name, tried when the
