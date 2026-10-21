@@ -60,6 +60,12 @@ var corpus = []struct {
 	{"Diarios de motocicleta", 1653},
 	{"Grey Gardens (1975) 1080p.BluRay.H264.AAC-RARBG", 17346},
 	{"Deep Throat (1972)", 5853},
+	{"Azor - Andreas Fontana (2021)", 659954},
+	{"El campo - Hernán Belón (2011)", 154552},
+	{"Jean-Luc Godard - A Bout de souffle", 0},   // review: 269 is first (0.85) but "A Bout de Souffle" (0) 1563133 at 0.82 blocks the margin
+	{"Mediterraneo G Salvatore (1991)", 0},       // TMDB: Gabriele Salvatores — "Salvatore" ≠ "Salvatores", so review
+	{"Melancholia, Lars Von Trier (2011)", 62215},
+	{"Loulou Pialat (1980)", 39415},
 }
 
 func TestCorpus(t *testing.T) {
