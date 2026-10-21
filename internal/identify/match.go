@@ -5,6 +5,7 @@ package identify
 import (
 	"context"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strings"
@@ -18,8 +19,9 @@ import (
 // change, so earlier automatic results are recomputed. 2: the language is
 // part of the stored query; unavailable credits no longer fail a search.
 // 3: search queries are sent without accents. 4: also decomposed accents
-// (macOS file names).
-const MatcherVersion = 4
+// (macOS file names). 5: alternative readings of the name; runtime orders the
+// review candidates.
+const MatcherVersion = 5
 
 // A version is assigned automatically when its best candidate scores at
 // least AutoThreshold and beats the runner-up by at least AutoMargin.
@@ -71,78 +73,151 @@ func (q Query) storedKey(lang string) string {
 	return q.Key() + "|" + lang
 }
 
+// scored is a candidate plus how its score came to be.
+type scored struct {
+	store.Candidate
+	alt       bool // the best score came from an alternative reading
+	confirmed bool // TMDB confirmed that reading's director
+}
+
 // Search returns scored candidates, best first, and the details fetched on
 // the way (in lang), which enrichment can reuse. An IMDb id that TMDB knows
 // yields that movie alone with score 1.
 func Search(ctx context.Context, api API, lang string, q Query) ([]store.Candidate, map[int]tmdb.Details, error) {
 	details := map[int]tmdb.Details{}
+	cands, err := searchScored(ctx, api, lang, q, false, details)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]store.Candidate, len(cands))
+	for i, c := range cands {
+		out[i] = c.Candidate
+	}
+	return out, details, nil
+}
+
+// searchScored is Search's work. It fills details, reusing the ids already
+// there. With alt set, q is an alternative reading of the name: no English
+// search is made, and a candidate whose director TMDB does not confirm is
+// scored on title and year alone, rescaled to 0..1.
+func searchScored(ctx context.Context, api API, lang string, q Query, alt bool, details map[int]tmdb.Details) ([]scored, error) {
 	if q.IMDbID != "" {
 		rs, err := api.FindIMDb(ctx, q.IMDbID, lang)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if len(rs) > 0 {
 			c := candidate(rs[0])
 			c.Score = 1
-			return []store.Candidate{c}, details, nil
+			return []scored{{Candidate: c, alt: alt, confirmed: alt}}, nil
 		}
 	}
 	variants := titleVariants(q.Title)
 	if len(variants) == 0 {
-		return []store.Candidate{}, details, nil
+		return []scored{}, nil
 	}
 	hits, err := search(ctx, api, variants[0], q.Year, lang)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	cands := score(q, variants, hits)
+	cands := score(q, variants, hits, alt)
 	// An alternative title in brackets ("Solyaris [Solaris]") is searched
 	// too when the main one is not conclusive.
 	for _, v := range variants[1:] {
-		if conclusive(cands) {
+		if conclusive(scores(cands)) {
 			break
 		}
 		more, err := search(ctx, api, v, q.Year, lang)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		hits = merge(hits, more, false)
-		cands = score(q, variants, hits)
+		cands = score(q, variants, hits, alt)
 	}
 	// Files are often named with the English title, which a localized
 	// search shows neither as title nor as original title: when the result is
 	// not conclusive, the English titles are looked at too.
-	if lang != fallbackLang && !conclusive(cands) {
+	if !alt && lang != fallbackLang && !conclusive(scores(cands)) {
 		en, err := search(ctx, api, variants[0], q.Year, fallbackLang)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		hits = merge(hits, en, true)
-		cands = score(q, variants, hits)
+		cands = score(q, variants, hits, alt)
 	}
 	if q.Director != "" {
 		for i := range min(directorChecks, len(cands)) {
-			d, err := api.Movie(ctx, cands[i].TMDBID, lang)
-			if fatal(err) {
-				return nil, nil, err
+			d, ok := details[cands[i].TMDBID]
+			if !ok {
+				var err error
+				d, err = api.Movie(ctx, cands[i].TMDBID, lang)
+				if fatal(err) {
+					return nil, err
+				}
+				if err != nil {
+					// Details TMDB cannot give now (a removed movie) only cost
+					// the candidate its director share.
+					continue
+				}
+				details[d.ID] = d
 			}
-			if err != nil {
-				// Details TMDB cannot give now (a removed movie) only cost
-				// the candidate its director share.
-				continue
-			}
-			details[d.ID] = d
 			var names []string
 			for _, p := range d.Directors() {
 				names = append(names, p.Name)
 			}
 			if directorMatches(q.Director, names) {
 				cands[i].Score += directorWeight
+				cands[i].confirmed = true
 			}
 		}
-		sortCandidates(cands)
 	}
-	return cands, details, nil
+	if alt {
+		for i := range cands {
+			if !cands[i].confirmed {
+				cands[i].Score /= titleWeight + yearWeight
+			}
+		}
+	}
+	if q.Director != "" || alt {
+		sortScored(cands)
+	}
+	return cands, nil
+}
+
+func scores(cs []scored) []store.Candidate {
+	out := make([]store.Candidate, len(cs))
+	for i, c := range cs {
+		out[i] = c.Candidate
+	}
+	return out
+}
+
+// pool joins more into dst without repeating a movie: each id keeps its
+// highest-scoring entry. The result is ordered best first.
+func pool(dst, more []scored) []scored {
+	pos := map[int]int{}
+	for i, c := range dst {
+		pos[c.TMDBID] = i
+	}
+	for _, c := range more {
+		if i, ok := pos[c.TMDBID]; ok {
+			if c.Score > dst[i].Score {
+				dst[i] = c
+			}
+		} else {
+			pos[c.TMDBID] = len(dst)
+			dst = append(dst, c)
+		}
+	}
+	sortScored(dst)
+	return dst
+}
+
+// assignable reports whether the best candidate would be assigned: it is
+// conclusive and, when it came from an alternative reading, that reading's
+// director was confirmed.
+func assignable(cs []scored) bool {
+	return conclusive(scores(cs)) && (!cs[0].alt || cs[0].confirmed)
 }
 
 // Identify decides what a query is: StatusAuto with the movie, or
@@ -170,18 +245,35 @@ func Identify(ctx context.Context, api API, lang string, q Query) (store.Identif
 }
 
 func identify(ctx context.Context, api API, lang string, q Query) (store.Identification, map[int]tmdb.Details, error) {
-	cands, details, err := Search(ctx, api, lang, q)
+	details := map[int]tmdb.Details{}
+	cands, err := searchScored(ctx, api, lang, q, false, details)
 	if err != nil {
 		return store.Identification{}, nil, err
 	}
+	if !assignable(cands) {
+		for _, r := range readings(q) {
+			more, err := searchScored(ctx, api, lang, r, true, details)
+			if fatal(err) {
+				return store.Identification{}, nil, err
+			}
+			if err != nil {
+				log.Printf("lectura %q: %v", r.Title, err)
+				continue
+			}
+			cands = pool(cands, more)
+			if assignable(cands) {
+				break
+			}
+		}
+	}
 	id := store.Identification{Status: store.StatusUnmatched, MatcherVersion: MatcherVersion}
 	if len(cands) > 0 {
-		if conclusive(cands) {
+		if assignable(cands) {
 			id.Status, id.TMDBID = store.StatusAuto, cands[0].TMDBID
 		}
 		id.Confidence = cands[0].Score
 	}
-	id.Candidates = cands[:min(keptCandidates, len(cands))]
+	id.Candidates = scores(cands[:min(keptCandidates, len(cands))])
 	return id, details, nil
 }
 
@@ -262,20 +354,20 @@ func merge(hits, more []hit, english bool) []hit {
 // known, since the director share cannot be earned), best first. The title
 // share is the best similarity between any variant of the parsed title and
 // the movie's localized, original or English title.
-func score(q Query, variants []string, hits []hit) []store.Candidate {
-	cands := make([]store.Candidate, len(hits))
+func score(q Query, variants []string, hits []hit, alt bool) []scored {
+	cands := make([]scored, len(hits))
 	for i, h := range hits {
-		cands[i] = candidate(h.Result)
+		cands[i] = scored{Candidate: candidate(h.Result), alt: alt}
 		t := 0.0
 		for _, v := range variants {
 			t = max(t, titleScore(v, h.Title, h.OriginalTitle), titleWeight*similarity(v, h.english))
 		}
 		cands[i].Score = t + yearScore(q.Year, h.Year())
-		if q.Director == "" {
+		if q.Director == "" && !alt {
 			cands[i].Score /= titleWeight + yearWeight
 		}
 	}
-	sortCandidates(cands)
+	sortScored(cands)
 	return cands
 }
 
@@ -291,5 +383,9 @@ func candidate(r tmdb.Result) store.Candidate {
 
 // sortCandidates orders by score, keeping TMDB's order (popularity) on ties.
 func sortCandidates(cs []store.Candidate) {
+	sort.SliceStable(cs, func(i, j int) bool { return cs[i].Score > cs[j].Score })
+}
+
+func sortScored(cs []scored) {
 	sort.SliceStable(cs, func(i, j int) bool { return cs[i].Score > cs[j].Score })
 }
