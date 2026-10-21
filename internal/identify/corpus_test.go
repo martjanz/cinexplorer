@@ -26,46 +26,49 @@ const corpusFile = "testdata/tmdb_corpus.json"
 // corpus lists real names from the collection and the expected outcome: a
 // TMDB id for an automatic match, or 0 for "left for review".
 var corpus = []struct {
-	name string
-	want int
+	name  string
+	want  int
+	first int // for a review case (want 0): the TMDB id expected first among the candidates
 }{
-	{"Amarcord [Federico Fellini, 1973]", 7857},
-	{"Chinatown (Polanski, USA, 1974)", 829},
-	{"Arabian.Nights.1974.CC.1080p.BluRay.FLAC1.0.x264-ADE", 47406},
-	{"A Woman Under the Influence [John Cassavetes, 1974]", 29845},
-	{"Annie Hall [1977, USA]", 703},
-	{"Apocalypse Now (Francis Ford Coppola, 1979)", 28},
-	{"Cries and Whispers [Ingmar Bergman, 1972]", 10238},
-	{"Eraserhead (Lynch, USA, 1976)", 985},
-	{"La piel dura (L'argent de poche) (France, 1976)", 1660},
-	{"La.Patagonia.rebelde.1974.Hector.Olivera.WEB-DL.1080p.SPA.RUS.Sub.SPA.ENG.RUS.(emule.via..clan-sudamerica.net)", 64978},
-	{"Los Gauchos Judíos (Juan José Jusid, Argentina, 1974)", 537898},
-	{"Los traidores (Raymundo Gleyzer, 1972)", 0},
-	{"Mad Max (Miller, Australia, 1979) [1080p]", 9659},
-	{"Nazareno.Cruz.Y.El.Lobo.1975.720p.WEB-DL.AAC2.0.H.264-gooz.(Found.via.clan-sudamerica.net)", 127424},
-	{"Salo o le 120 giornate di Sodoma (1975) [Italy]", 5336},
-	{"Scener ur ett äktenskap (1973)", 133919},
-	{"Solyaris.[Solaris].1972.DVDRip.H264.AAC.Gopo", 593},
-	{"Star.Wars.Episode.IV.A.New.Hope.1977.REMASTERED.1080p.BluRay.x265-RARBG", 0},
-	{"The Omen [Donner] (UK, 1976)", 794},
-	{"Paper Moon (1973)", 11293},
-	{"Hamaca Paraguaya", 0},
-	{"Shoah", 42044},
-	{"Destino.final-zoe(Emule.via.clan-sudamerica.net)", 0},
-	{"Ordet", 0},
-	{"Our Litlle Sister", 0},
-	{"El cazador (Shekarchi)", 0},
-	{"Husbands (John Cassavetes, 1970) [Extended Cut, 142min] XVID-KG", 52105},
-	{"1900 (Novecento) (1976) [mkvonly]", 3870},
-	{"Diarios de motocicleta", 1653},
-	{"Grey Gardens (1975) 1080p.BluRay.H264.AAC-RARBG", 17346},
-	{"Deep Throat (1972)", 5853},
-	{"Azor - Andreas Fontana (2021)", 659954},
-	{"El campo - Hernán Belón (2011)", 154552},
-	{"Jean-Luc Godard - A Bout de souffle", 0},   // review: 269 is first (0.85) but "A Bout de Souffle" (0) 1563133 at 0.82 blocks the margin
-	{"Mediterraneo G Salvatore (1991)", 0},       // TMDB: Gabriele Salvatores — "Salvatore" ≠ "Salvatores", so review
-	{"Melancholia, Lars Von Trier (2011)", 62215},
-	{"Loulou Pialat (1980)", 39415},
+	{"Amarcord [Federico Fellini, 1973]", 7857, 0},
+	{"Chinatown (Polanski, USA, 1974)", 829, 0},
+	{"Arabian.Nights.1974.CC.1080p.BluRay.FLAC1.0.x264-ADE", 47406, 0},
+	{"A Woman Under the Influence [John Cassavetes, 1974]", 29845, 0},
+	{"Annie Hall [1977, USA]", 703, 0},
+	{"Apocalypse Now (Francis Ford Coppola, 1979)", 28, 0},
+	{"Cries and Whispers [Ingmar Bergman, 1972]", 10238, 0},
+	{"Eraserhead (Lynch, USA, 1976)", 985, 0},
+	{"La piel dura (L'argent de poche) (France, 1976)", 1660, 0},
+	{"La.Patagonia.rebelde.1974.Hector.Olivera.WEB-DL.1080p.SPA.RUS.Sub.SPA.ENG.RUS.(emule.via..clan-sudamerica.net)", 64978, 0},
+	{"Los Gauchos Judíos (Juan José Jusid, Argentina, 1974)", 537898, 0},
+	{"Los traidores (Raymundo Gleyzer, 1972)", 0, 0},
+	{"Mad Max (Miller, Australia, 1979) [1080p]", 9659, 0},
+	{"Nazareno.Cruz.Y.El.Lobo.1975.720p.WEB-DL.AAC2.0.H.264-gooz.(Found.via.clan-sudamerica.net)", 127424, 0},
+	{"Salo o le 120 giornate di Sodoma (1975) [Italy]", 5336, 0},
+	{"Scener ur ett äktenskap (1973)", 133919, 0},
+	{"Solyaris.[Solaris].1972.DVDRip.H264.AAC.Gopo", 593, 0},
+	{"Star.Wars.Episode.IV.A.New.Hope.1977.REMASTERED.1080p.BluRay.x265-RARBG", 0, 0},
+	{"The Omen [Donner] (UK, 1976)", 794, 0},
+	{"Paper Moon (1973)", 11293, 0},
+	{"Hamaca Paraguaya", 0, 0},
+	{"Shoah", 42044, 0},
+	{"Destino.final-zoe(Emule.via.clan-sudamerica.net)", 0, 0},
+	{"Ordet", 0, 0},
+	{"Our Litlle Sister", 0, 0},
+	{"El cazador (Shekarchi)", 0, 0},
+	{"Husbands (John Cassavetes, 1970) [Extended Cut, 142min] XVID-KG", 52105, 0},
+	{"1900 (Novecento) (1976) [mkvonly]", 3870, 0},
+	{"Diarios de motocicleta", 1653, 0},
+	{"Grey Gardens (1975) 1080p.BluRay.H264.AAC-RARBG", 17346, 0},
+	{"Deep Throat (1972)", 5853, 0},
+	{"Azor - Andreas Fontana (2021)", 659954, 0},
+	{"El campo - Hernán Belón (2011)", 154552, 0},
+	{"Jean-Luc Godard - A Bout de souffle", 0, 269}, // review: 269 is first (0.85) but "A Bout de Souffle" (0) 1563133 at 0.82 blocks the margin
+	{"Mediterraneo G Salvatore (1991)", 0, 38251},   // TMDB: Gabriele Salvatores — "Salvatore" ≠ "Salvatores", so review
+	{"Jean-Luc Godard-A bout de souffle", 0, 269},   // review: 269 is first (0.85) but the 0.82 remakes block the margin
+	{"Jean-Pierre Melville-Le samouraï (1967)", 5511, 0},
+	{"Melancholia, Lars Von Trier (2011)", 62215, 0},
+	{"Loulou Pialat (1980)", 39415, 0},
 }
 
 func TestCorpus(t *testing.T) {
@@ -88,6 +91,9 @@ func TestCorpus(t *testing.T) {
 		t.Logf("%-50.50s → %-9s %6d  %.2f  %s", tc.name, id.Status, id.TMDBID, id.Confidence, describe(id.Candidates))
 		if got != tc.want {
 			t.Errorf("%s: got %s %d (%.2f), want %d", tc.name, id.Status, got, id.Confidence, tc.want)
+		}
+		if tc.first != 0 && (len(id.Candidates) == 0 || id.Candidates[0].TMDBID != tc.first) {
+			t.Errorf("%s: candidates %s, want %d first", tc.name, describe(id.Candidates), tc.first)
 		}
 	}
 	t.Logf("automáticas: %d/%d", auto, len(corpus))
