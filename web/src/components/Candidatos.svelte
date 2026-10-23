@@ -1,31 +1,50 @@
 <script>
   import { candidatePosterURL } from '../lib/api.js'
   import { percent, sameTitle } from '../lib/format.js'
+  import DetalleCandidato from './DetalleCandidato.svelte'
 
   // list: TMDB candidates {tmdbId, title, originalTitle, year, posterPath,
   // score}; onpick(candidate); numbered: show 1–5 for the keyboard.
   let { list, onpick, numbered = false, disabled = false } = $props()
+
+  let shown = $state(null) // index of the candidate whose details are open
 </script>
 
 <div class="cands">
   {#each list as c, i (c.tmdbId)}
-    <button class="cand" onclick={() => onpick(c)} {disabled} title={`Es ${c.title} (${c.year || 's/f'})`}>
-      {#if c.posterPath}
-        <img src={candidatePosterURL(c)} alt="" loading="lazy" />
-      {:else}
-        <div class="noimg"></div>
-      {/if}
-      <div class="ct">
-        {#if numbered && i < 5}<span class="n">{i + 1}</span>{/if}
-        {c.title}
-      </div>
-      <div class="cm">
-        {c.year || 's/f'}{c.originalTitle && !sameTitle(c.title, c.originalTitle) ? ` · ${c.originalTitle}` : ''}
-      </div>
-      <div class="pct">{percent(c.score)}</div>
-    </button>
+    <div class="wrap">
+      <button class="cand" onclick={() => onpick(c)} {disabled} title={`Es ${c.title} (${c.year || 's/f'})`}>
+        {#if c.posterPath}
+          <img src={candidatePosterURL(c)} alt="" loading="lazy" />
+        {:else}
+          <div class="noimg"></div>
+        {/if}
+        <div class="ct">
+          {#if numbered && i < 5}<span class="n">{i + 1}</span>{/if}
+          {c.title}
+        </div>
+        <div class="cm">
+          {c.year || 's/f'}{c.originalTitle && !sameTitle(c.title, c.originalTitle) ? ` · ${c.originalTitle}` : ''}
+        </div>
+        <div class="pct">{percent(c.score)}</div>
+      </button>
+      <button class="more" onclick={() => (shown = i)} title="Ver detalles" aria-label={`Detalles de ${c.title}`}>i</button>
+    </div>
   {/each}
 </div>
+
+{#if shown !== null && list[shown]}
+  <DetalleCandidato
+    {list}
+    bind:index={shown}
+    {disabled}
+    onpick={(c) => {
+      shown = null
+      onpick(c)
+    }}
+    onclose={() => (shown = null)}
+  />
+{/if}
 
 <style>
   .cands {
@@ -33,8 +52,13 @@
     grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
     gap: 10px;
   }
+  .wrap {
+    position: relative;
+    min-width: 0;
+  }
   .cand {
     display: block;
+    width: 100%;
     text-align: left;
     padding: 6px;
     border-color: var(--line);
@@ -42,6 +66,26 @@
   }
   .cand:hover:not(:disabled) {
     border-color: var(--accent);
+  }
+  .more {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 13px;
+    font-weight: 600;
+    font-style: italic;
+    font-family: Georgia, serif;
+    background: rgb(0 0 0 / 0.65);
+    border-color: var(--line-strong);
+    color: var(--strong);
+  }
+  .more:hover {
+    border-color: var(--accent);
+    color: var(--accent);
   }
   img,
   .noimg {

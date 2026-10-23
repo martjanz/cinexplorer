@@ -55,6 +55,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/reveal", jsonOnly(func(w http.ResponseWriter, r *http.Request) { s.withFile(w, r, s.Revealer) }))
 	mux.HandleFunc("GET /api/unidentified", s.unidentified)
 	mux.HandleFunc("GET /api/tmdb/search", s.search)
+	mux.HandleFunc("GET /api/tmdb/movie/{id}", s.candidate)
 	mux.HandleFunc("POST /api/identify", jsonOnly(s.identify))
 	mux.HandleFunc("GET /img/{kind}/{file}", s.image)
 	mux.HandleFunc("GET /api/search", s.find)
