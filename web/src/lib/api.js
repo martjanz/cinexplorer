@@ -35,6 +35,8 @@ const put = (path, body) => call('PUT', path, body)
 const patch = (path, body) => call('PATCH', path, body)
 const del = (path, body) => call('DELETE', path, body ?? {})
 
+const candidates = new Map() // tmdbId → details promise
+
 export const api = {
   status: () => get('/api/status'),
   home: (seed) => get(`/api/home?seed=${seed}`),
@@ -49,6 +51,16 @@ export const api = {
   unidentified: () => get('/api/unidentified'),
   duplicates: () => get('/api/duplicates'),
   search: (q) => get(`/api/tmdb/search?${new URLSearchParams({ q })}`),
+  candidate: (tmdbId) => {
+    // Kept for the session: reopening a candidate costs no TMDB request.
+    let p = candidates.get(tmdbId)
+    if (!p) {
+      p = get(`/api/tmdb/movie/${tmdbId}`)
+      candidates.set(tmdbId, p)
+      p.catch(() => candidates.delete(tmdbId))
+    }
+    return p
+  },
   identify: (fingerprint, action, tmdbId = 0) => post('/api/identify', { fingerprint, action, tmdbId }),
   open: (path) => post('/api/open', { path }),
   reveal: (path) => post('/api/reveal', { path }),

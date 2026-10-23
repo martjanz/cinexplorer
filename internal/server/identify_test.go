@@ -37,8 +37,11 @@ func (f *fakeTMDB) Movie(ctx context.Context, id int, lang string) (tmdb.Details
 	if id != 7857 {
 		return tmdb.Details{}, tmdb.ErrNotFound
 	}
-	return tmdb.Details{ID: 7857, Title: "Amarcord", ReleaseDate: "1973-12-18", Overview: "Rimini.",
-		PosterPath: "/p.jpg", BackdropPath: "/b.jpg"}, nil
+	d := tmdb.Details{ID: 7857, Title: "Amarcord", ReleaseDate: "1973-12-18", Overview: "Rimini.",
+		PosterPath: "/p.jpg", BackdropPath: "/b.jpg", Runtime: 123}
+	d.Credits.Crew = []tmdb.Person{{ID: 1, Name: "Federico Fellini", Job: "Director"}, {ID: 2, Name: "Nino Rota", Job: "Music"}}
+	d.Credits.Cast = []tmdb.Person{{ID: 4, Name: "Pupella Maggio", Order: 1}, {ID: 3, Name: "Magali Noël", Order: 0}}
+	return d, nil
 }
 
 func (f *fakeTMDB) Translations(ctx context.Context, id int) ([]tmdb.Translation, error) {
@@ -136,6 +139,27 @@ func TestSearchEndpoint(t *testing.T) {
 	}
 	s.rt().TMDB = nil
 	if rec := request(s.Handler(), "GET", "/api/tmdb/search?q=x", "", "", "127.0.0.1"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("without token: %d", rec.Code)
+	}
+}
+
+func TestCandidateDetailsEndpoint(t *testing.T) {
+	s, _ := identifyServer(t)
+	rec := request(s.Handler(), "GET", "/api/tmdb/movie/7857", "", "", "127.0.0.1")
+	var d candidateDetails
+	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil || d.TMDBID != 7857 || d.Year != 1973 || d.Runtime != 123 ||
+		d.Overview != "Rimini." || strings.Join(d.Directors, ",") != "Federico Fellini" ||
+		strings.Join(d.Cast, ",") != "Magali Noël,Pupella Maggio" {
+		t.Fatalf("details %s", rec.Body)
+	}
+	if rec := request(s.Handler(), "GET", "/api/tmdb/movie/5", "", "", "127.0.0.1"); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown movie: %d", rec.Code)
+	}
+	if rec := request(s.Handler(), "GET", "/api/tmdb/movie/x", "", "", "127.0.0.1"); rec.Code != http.StatusNotFound {
+		t.Fatalf("bad id: %d", rec.Code)
+	}
+	s.rt().TMDB = nil
+	if rec := request(s.Handler(), "GET", "/api/tmdb/movie/7857", "", "", "127.0.0.1"); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("without token: %d", rec.Code)
 	}
 }

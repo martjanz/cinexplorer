@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -37,6 +38,57 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, cands)
+}
+
+// candidateDetails is what the review shows of a candidate before deciding.
+type candidateDetails struct {
+	TMDBID        int      `json:"tmdbId"`
+	Title         string   `json:"title"`
+	OriginalTitle string   `json:"originalTitle"`
+	Year          int      `json:"year"`
+	Runtime       int      `json:"runtime"`
+	Overview      string   `json:"overview"`
+	PosterPath    string   `json:"posterPath"`
+	Genres        []string `json:"genres"`
+	Directors     []string `json:"directors"`
+	Cast          []string `json:"cast"` // the first billed
+}
+
+const detailsCast = 6
+
+// candidate returns a TMDB movie's details, stored or not, to tell
+// candidates apart.
+func (s *Server) candidate(w http.ResponseWriter, r *http.Request) {
+	rt := s.rt()
+	if rt.TMDB == nil {
+		http.Error(w, "sin token de TMDB", http.StatusServiceUnavailable)
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	m, err := rt.TMDB.Movie(r.Context(), id, rt.Config.Language)
+	if err != nil {
+		tmdbError(w, err)
+		return
+	}
+	d := candidateDetails{TMDBID: m.ID, Title: m.Title, OriginalTitle: m.OriginalTitle, Year: m.Year(),
+		Runtime: m.Runtime, Overview: m.Overview, PosterPath: m.PosterPath,
+		Genres: []string{}, Directors: []string{}, Cast: []string{}}
+	for _, g := range m.Genres {
+		d.Genres = append(d.Genres, g.Name)
+	}
+	for _, p := range m.Directors() {
+		d.Directors = append(d.Directors, p.Name)
+	}
+	cast := slices.Clone(m.Credits.Cast)
+	slices.SortStableFunc(cast, func(a, b tmdb.Person) int { return a.Order - b.Order })
+	for _, p := range cast[:min(len(cast), detailsCast)] {
+		d.Cast = append(d.Cast, p.Name)
+	}
+	writeJSON(w, d)
 }
 
 // identify records the user's decision about a version's fingerprint.
